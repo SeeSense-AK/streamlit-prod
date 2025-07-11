@@ -4,22 +4,28 @@ Handles data loading and routing to appropriate pages
 """
 import streamlit as st
 import logging
+import sys
 from pathlib import Path
 
+# Add the parent directory to sys.path to enable absolute imports
+current_dir = Path(__file__).parent
+parent_dir = current_dir.parent
+sys.path.insert(0, str(parent_dir))
+
 # Import configuration and setup logging
-from utils.config import config, setup_logging
+from app.utils.config import config, setup_logging
 setup_logging()
 
 # Import core components
-from core.data_processor import data_processor
-from pages.data_setup import render_data_setup_page
+from app.core.data_processor import data_processor
+from app.pages.data_setup import render_data_setup_page
 
 # Import page modules (we'll create these next)
-# from .pages.overview import render_overview_page
-# from .pages.ml_insights import render_ml_insights_page
-# from .pages.spatial_analysis import render_spatial_analysis_page
-# from .pages.advanced_analytics import render_advanced_analytics_page
-# from .pages.actionable_insights import render_actionable_insights_page
+# from app.pages.overview import render_overview_page
+# from app.pages.ml_insights import render_ml_insights_page
+# from app.pages.spatial_analysis import render_spatial_analysis_page
+# from app.pages.advanced_analytics import render_advanced_analytics_page
+# from app.pages.actionable_insights import render_actionable_insights_page
 
 logger = logging.getLogger(__name__)
 
