@@ -3,7 +3,15 @@ Dashboard pages for SeeSense Platform
 Individual page modules for different dashboard sections
 """
 
-from .data_setup import render_data_setup_page
+# Import with error handling for development
+try:
+    from .data_setup import render_data_setup_page
+except ImportError:
+    # Fallback for direct execution
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+    from app.pages.data_setup import render_data_setup_page
 
 # When we implement these pages, we'll add imports like:
 # from .overview import render_overview_page
