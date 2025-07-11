@@ -1,0 +1,135 @@
+# Data Schema Definitions for Validation
+
+routes:
+  required_columns:
+    - route_id
+    - start_lat
+    - start_lon
+    - end_lat
+    - end_lon
+    - distinct_cyclists
+    - days_active
+    - popularity_rating
+    - avg_speed
+    - avg_duration
+    - route_type
+    - has_bike_lane
+  
+  column_types:
+    route_id: "string"
+    start_lat: "float"
+    start_lon: "float"
+    end_lat: "float"
+    end_lon: "float"
+    distinct_cyclists: "int"
+    days_active: "int"
+    popularity_rating: "int"
+    avg_speed: "float"
+    avg_duration: "float"
+    route_type: "string"
+    has_bike_lane: "boolean"
+    distance_km: "float"  # optional
+  
+  constraints:
+    start_lat: { min: -90, max: 90 }
+    start_lon: { min: -180, max: 180 }
+    end_lat: { min: -90, max: 90 }
+    end_lon: { min: -180, max: 180 }
+    distinct_cyclists: { min: 1 }
+    days_active: { min: 1 }
+    popularity_rating: { min: 1, max: 10 }
+    avg_speed: { min: 0, max: 100 }
+    route_type: { values: ["Commute", "Leisure", "Exercise", "Mixed"] }
+
+braking_hotspots:
+  required_columns:
+    - hotspot_id
+    - lat
+    - lon
+    - intensity
+    - incidents_count
+    - avg_deceleration
+    - road_type
+    - date_recorded
+  
+  column_types:
+    hotspot_id: "string"
+    lat: "float"
+    lon: "float"
+    intensity: "float"
+    incidents_count: "int"
+    avg_deceleration: "float"
+    road_type: "string"
+    surface_quality: "string"  # optional
+    date_recorded: "datetime"
+    severity_score: "float"  # optional
+  
+  constraints:
+    lat: { min: -90, max: 90 }
+    lon: { min: -180, max: 180 }
+    intensity: { min: 0, max: 10 }
+    incidents_count: { min: 0 }
+    avg_deceleration: { min: 0 }
+    road_type: { values: ["Junction", "Crossing", "Roundabout", "Straight", "Other"] }
+
+swerving_hotspots:
+  required_columns:
+    - hotspot_id
+    - lat
+    - lon
+    - intensity
+    - incidents_count
+    - avg_lateral_movement
+    - road_type
+    - date_recorded
+  
+  column_types:
+    hotspot_id: "string"
+    lat: "float"
+    lon: "float"
+    intensity: "float"
+    incidents_count: "int"
+    avg_lateral_movement: "float"
+    road_type: "string"
+    obstruction_present: "string"  # optional
+    date_recorded: "datetime"
+    cause_category: "string"  # optional
+  
+  constraints:
+    lat: { min: -90, max: 90 }
+    lon: { min: -180, max: 180 }
+    intensity: { min: 0, max: 10 }
+    incidents_count: { min: 0 }
+    avg_lateral_movement: { min: 0 }
+    road_type: { values: ["Junction", "Crossing", "Roundabout", "Straight", "Other"] }
+    obstruction_present: { values: ["Yes", "No", "Unknown"] }
+
+time_series:
+  required_columns:
+    - date
+    - total_rides
+    - incidents
+    - avg_speed
+    - avg_braking_events
+    - avg_swerving_events
+  
+  column_types:
+    date: "datetime"
+    total_rides: "int"
+    incidents: "int"
+    avg_speed: "float"
+    avg_braking_events: "float"
+    avg_swerving_events: "float"
+    precipitation_mm: "float"  # optional
+    temperature: "float"  # optional
+    wind_speed: "float"  # optional
+    visibility_km: "float"  # optional
+  
+  constraints:
+    total_rides: { min: 0 }
+    incidents: { min: 0 }
+    avg_speed: { min: 0, max: 100 }
+    avg_braking_events: { min: 0 }
+    avg_swerving_events: { min: 0 }
+    precipitation_mm: { min: 0 }
+    wind_speed: { min: 0 }
