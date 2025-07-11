@@ -1,0 +1,2 @@
+# This file ensures the data/processed directory is preserved in git
+# Processed and cached data files will be stored here automatically
