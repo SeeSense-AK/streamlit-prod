@@ -1,0 +1,71 @@
+# SeeSense Dashboard Configuration
+
+app:
+  title: "SeeSense Safety Analytics Platform"
+  icon: "🚲"
+  layout: "wide"
+  initial_sidebar_state: "expanded"
+  
+data:
+  raw_data_path: "data/raw"
+  processed_data_path: "data/processed"
+  cache_ttl: 3600  # Cache TTL in seconds (1 hour)
+  max_file_size_mb: 100
+  
+  # Expected file schemas
+  files:
+    routes: "routes.csv"
+    braking_hotspots: "braking_hotspots.csv"
+    swerving_hotspots: "swerving_hotspots.csv"
+    time_series: "time_series.csv"
+
+visualization:
+  default_map_center:
+    lat: 51.5074
+    lon: -0.1278
+  default_zoom: 12
+  color_schemes:
+    braking: "YlOrRd"
+    swerving: "PuRd"
+    routes: "Viridis"
+  max_points_display: 5000
+
+analytics:
+  ml_models:
+    risk_prediction:
+      n_estimators: 100
+      random_state: 42
+    anomaly_detection:
+      contamination: 0.05
+    clustering:
+      n_clusters: 4
+      random_state: 42
+  
+  time_series:
+    seasonal_period: 7  # Weekly seasonality
+    forecast_periods: 30
+  
+  insights:
+    min_confidence_threshold: 0.7
+    max_insights_per_category: 5
+
+ui:
+  theme:
+    primary_color: "#4e89ae"
+    background_color: "#f9f9f9"
+    card_background: "#ffffff"
+    text_color: "#333333"
+  
+  metrics:
+    refresh_interval: 300  # 5 minutes
+    animation_duration: 500
+
+export:
+  formats: ["PDF", "Excel", "CSV", "GeoJSON"]
+  max_export_rows: 50000
+  include_charts_in_pdf: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/dashboard.log"
