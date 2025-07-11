@@ -8,7 +8,7 @@ A production-ready cycling safety analytics dashboard built with Streamlit, desi
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/SeeSense-AK/streamlit-prod
 cd seesense-dashboard
 
 # Install dependencies
