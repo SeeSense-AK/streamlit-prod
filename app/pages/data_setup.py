@@ -7,9 +7,16 @@ import pandas as pd
 from pathlib import Path
 from typing import Dict, Any
 import logging
+import sys
 
-from ..core.data_processor import data_processor
-from ..utils.config import config
+# Add parent directory to path for imports
+current_dir = Path(__file__).parent
+app_dir = current_dir.parent
+project_root = app_dir.parent
+sys.path.insert(0, str(project_root))
+
+from app.core.data_processor import data_processor
+from app.utils.config import config
 
 logger = logging.getLogger(__name__)
 
