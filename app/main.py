@@ -11,8 +11,8 @@ from utils.config import config, setup_logging
 setup_logging()
 
 # Import core components
-from .core.data_processor import data_processor
-from .pages.data_setup import render_data_setup_page
+from core.data_processor import data_processor
+from pages.data_setup import render_data_setup_page
 
 # Import page modules (we'll create these next)
 # from .pages.overview import render_overview_page
