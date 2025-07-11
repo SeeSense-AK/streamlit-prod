@@ -1,0 +1,6 @@
+# This file ensures the data/raw directory is preserved in git
+# Place your CSV files here:
+# - routes.csv
+# - braking_hotspots.csv  
+# - swerving_hotspots.csv
+# - time_series.csv
