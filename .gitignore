@@ -1,0 +1,42 @@
+# Python
+.venv/
+db_test_env/
+*.pyc
+__pycache__/
+.DS_Store
+
+# Data files - exclude actual data but keep directory structure
+data/raw/*.csv
+data/processed/
+logs/
+
+# Keep directory structure with .gitkeep files
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!logs/.gitkeep
+
+# Streamlit
+.streamlit/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.temp
+
+# Cache
+*.cache
+*.pkl
+*.pkl.gz
+
+# Environment
+.env
+.env.local
