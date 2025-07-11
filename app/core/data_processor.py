@@ -11,8 +11,8 @@ import hashlib
 from datetime import datetime, timedelta
 import streamlit as st
 
-from ..utils.config import config
-from ..utils.validators import validate_csv_file, clean_dataframe, get_data_summary
+from app.utils.config import config
+from app.utils.validators import validate_csv_file, clean_dataframe, get_data_summary
 
 logger = logging.getLogger(__name__)
 
