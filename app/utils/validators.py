@@ -198,4 +198,168 @@ class DataValidator:
                     outlier_percentage = (outliers / len(df)) * 100
                     if outlier_percentage > 5:
                         self.validation_warnings.append(
-                            f"Column '{column}
+                            f"Column '{column}' has {outlier_percentage:.1f}% outliers"
+                        )
+
+
+def validate_csv_file(file_path: Path, dataset_name: str) -> Tuple[bool, pd.DataFrame, List[str], List[str]]:
+    """
+    Validate a CSV file and return the DataFrame with validation results
+    
+    Args:
+        file_path: Path to the CSV file
+        dataset_name: Name of the dataset for schema validation
+        
+    Returns:
+        Tuple of (is_valid, dataframe, errors, warnings)
+    """
+    errors = []
+    warnings = []
+    
+    try:
+        # Check file exists and size
+        if not file_path.exists():
+            errors.append(f"File not found: {file_path}")
+            return False, pd.DataFrame(), errors, warnings
+        
+        file_size_mb = file_path.stat().st_size / (1024 * 1024)
+        max_size = config.max_file_size_mb
+        
+        if file_size_mb > max_size:
+            errors.append(f"File size ({file_size_mb:.1f}MB) exceeds maximum ({max_size}MB)")
+            return False, pd.DataFrame(), errors, warnings
+        
+        # Read CSV file
+        try:
+            df = pd.read_csv(file_path)
+            logger.info(f"Successfully loaded {len(df)} rows from {file_path}")
+        except Exception as e:
+            errors.append(f"Failed to read CSV file: {str(e)}")
+            return False, pd.DataFrame(), errors, warnings
+        
+        # Validate data
+        validator = DataValidator(dataset_name)
+        is_valid, validation_errors, validation_warnings = validator.validate_dataframe(df)
+        
+        errors.extend(validation_errors)
+        warnings.extend(validation_warnings)
+        
+        return is_valid, df, errors, warnings
+        
+    except Exception as e:
+        errors.append(f"Unexpected error during validation: {str(e)}")
+        return False, pd.DataFrame(), errors, warnings
+
+
+def clean_dataframe(df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+    """
+    Clean and prepare DataFrame based on schema
+    
+    Args:
+        df: DataFrame to clean
+        dataset_name: Name of the dataset for schema reference
+        
+    Returns:
+        Cleaned DataFrame
+    """
+    schema = config.get_schema(dataset_name)
+    if not schema:
+        return df
+    
+    df_cleaned = df.copy()
+    column_types = schema.get('column_types', {})
+    
+    # Convert data types
+    for column, expected_type in column_types.items():
+        if column not in df_cleaned.columns:
+            continue
+        
+        try:
+            if expected_type == 'datetime':
+                df_cleaned[column] = pd.to_datetime(df_cleaned[column], errors='coerce')
+            elif expected_type == 'float':
+                df_cleaned[column] = pd.to_numeric(df_cleaned[column], errors='coerce')
+            elif expected_type == 'int':
+                df_cleaned[column] = pd.to_numeric(df_cleaned[column], errors='coerce', downcast='integer')
+            elif expected_type == 'boolean':
+                # Convert various boolean representations
+                bool_map = {
+                    'true': True, 'false': False,
+                    'True': True, 'False': False,
+                    'TRUE': True, 'FALSE': False,
+                    'yes': True, 'no': False,
+                    'Yes': True, 'No': False,
+                    'y': True, 'n': False,
+                    'Y': True, 'N': False,
+                    1: True, 0: False,
+                    '1': True, '0': False
+                }
+                df_cleaned[column] = df_cleaned[column].map(bool_map).fillna(df_cleaned[column])
+        
+        except Exception as e:
+            logger.warning(f"Failed to convert column '{column}' to {expected_type}: {str(e)}")
+    
+    # Remove completely empty rows
+    df_cleaned = df_cleaned.dropna(how='all')
+    
+    # Apply constraints and filters
+    constraints = schema.get('constraints', {})
+    for column, constraint_dict in constraints.items():
+        if column not in df_cleaned.columns:
+            continue
+        
+        # Filter out values outside min/max constraints
+        if 'min' in constraint_dict:
+            min_val = constraint_dict['min']
+            df_cleaned = df_cleaned[df_cleaned[column] >= min_val]
+        
+        if 'max' in constraint_dict:
+            max_val = constraint_dict['max']
+            df_cleaned = df_cleaned[df_cleaned[column] <= max_val]
+        
+        # Filter out invalid categorical values
+        if 'values' in constraint_dict:
+            allowed_values = constraint_dict['values']
+            df_cleaned = df_cleaned[df_cleaned[column].isin(allowed_values)]
+    
+    logger.info(f"Data cleaning completed. Rows: {len(df)} -> {len(df_cleaned)}")
+    return df_cleaned
+
+
+def get_data_summary(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Generate a summary of the DataFrame
+    
+    Args:
+        df: DataFrame to summarize
+        
+    Returns:
+        Dictionary containing data summary
+    """
+    summary = {
+        'row_count': len(df),
+        'column_count': len(df.columns),
+        'missing_values': df.isnull().sum().to_dict(),
+        'data_types': df.dtypes.astype(str).to_dict(),
+        'memory_usage_mb': df.memory_usage(deep=True).sum() / (1024 * 1024),
+    }
+    
+    # Add numeric column statistics
+    numeric_columns = df.select_dtypes(include=[np.number]).columns
+    if len(numeric_columns) > 0:
+        summary['numeric_summary'] = df[numeric_columns].describe().to_dict()
+    
+    # Add categorical column information
+    categorical_columns = df.select_dtypes(include=['object']).columns
+    categorical_info = {}
+    for col in categorical_columns:
+        unique_count = df[col].nunique()
+        categorical_info[col] = {
+            'unique_values': unique_count,
+            'top_values': df[col].value_counts().head(5).to_dict()
+        }
+    
+    if categorical_info:
+        summary['categorical_summary'] = categorical_info
+    
+    return summary
