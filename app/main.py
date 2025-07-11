@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 # Import configuration and setup logging
-from .utils.config import config, setup_logging
+from utils.config import config, setup_logging
 setup_logging()
 
 # Import core components
