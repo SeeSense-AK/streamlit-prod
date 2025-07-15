@@ -160,14 +160,28 @@ class DataValidator:
                 f"Found {duplicate_rows} duplicate rows"
             )
         
-        # Check for duplicate IDs in ID columns
-        id_columns = [col for col in df.columns if 'id' in col.lower()]
+        # Check for duplicate IDs in actual ID columns only
+        # Only check columns that are specifically designed to be unique identifiers
+        id_columns = []
+        
+        # Look for columns that are clearly ID columns
+        for col in df.columns:
+            col_lower = col.lower()
+            # Only check columns that end with '_id' or are exactly 'id'
+            if (col_lower.endswith('_id') or 
+                col_lower == 'id' or 
+                col_lower == 'route_id' or 
+                col_lower == 'hotspot_id'):
+                id_columns.append(col)
+        
+        # Check for duplicates in actual ID columns
         for id_col in id_columns:
-            duplicate_ids = df[id_col].duplicated().sum()
-            if duplicate_ids > 0:
-                self.validation_errors.append(
-                    f"Found {duplicate_ids} duplicate IDs in column '{id_col}'"
-                )
+            if id_col in df.columns:
+                duplicate_ids = df[id_col].duplicated().sum()
+                if duplicate_ids > 0:
+                    self.validation_errors.append(
+                        f"Found {duplicate_ids} duplicate IDs in column '{id_col}'"
+                    )
     
     def _check_data_quality(self, df: pd.DataFrame) -> None:
         """Check general data quality issues"""
