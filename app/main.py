@@ -20,8 +20,11 @@ setup_logging()
 from app.core.data_processor import data_processor
 from app.pages.data_setup import render_data_setup_page
 
-# Import page modules (we'll create these next)
-# from app.pages.overview import render_overview_page
+# Import page modules
+from app.pages.overview import render_overview_page
+from app.pages.data_setup import render_data_setup_page
+
+# Future page imports (we'll add these as we build them)
 # from app.pages.ml_insights import render_ml_insights_page
 # from app.pages.spatial_analysis import render_spatial_analysis_page
 # from app.pages.advanced_analytics import render_advanced_analytics_page
@@ -235,14 +238,7 @@ def main():
             if data_status['available_datasets'] == 0:
                 render_data_not_available_message()
             else:
-                st.title("📊 Dashboard Overview")
-                st.info("Dashboard pages will be implemented in the next steps. Your data is ready!")
-                
-                # Show available datasets
-                st.markdown("### Available Datasets:")
-                for dataset_name, status in data_status['datasets'].items():
-                    if status['file_exists']:
-                        st.success(f"✅ {dataset_name.replace('_', ' ').title()}: {status.get('row_count', 'Unknown')} rows")
+                render_overview_page()
         
         elif selected_page in ["ml_insights", "spatial_analysis", "advanced_analytics", "actionable_insights"]:
             # Check if data is available
