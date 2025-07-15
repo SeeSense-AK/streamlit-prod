@@ -24,34 +24,49 @@ def render_overview_page():
     st.title("📊 Dashboard Overview")
     st.markdown("Real-time insights into cycling safety across your network")
     
-    # Load all datasets
-    all_data = data_processor.load_all_datasets()
-    
-    # Check if we have any data
-    available_datasets = [name for name, (df, _) in all_data.items() if df is not None]
-    
-    if not available_datasets:
-        render_no_data_message()
-        return
-    
-    # Extract dataframes
-    routes_df = all_data.get('routes', (None, {}))[0]
-    braking_df = all_data.get('braking_hotspots', (None, {}))[0]
-    swerving_df = all_data.get('swerving_hotspots', (None, {}))[0]
-    time_series_df = all_data.get('time_series', (None, {}))[0]
-    
-    # Add filters in sidebar
-    render_overview_filters(routes_df, time_series_df)
-    
-    # Apply filters
-    filtered_data = apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df)
-    routes_df, braking_df, swerving_df, time_series_df = filtered_data
-    
-    # Render main overview sections
-    render_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
-    render_safety_maps(braking_df, swerving_df, routes_df)
-    render_trends_analysis(time_series_df)
-    render_recent_alerts(braking_df, swerving_df)
+    try:
+        # Load all datasets
+        all_data = data_processor.load_all_datasets()
+        
+        # Check if we have any data
+        available_datasets = [name for name, (df, _) in all_data.items() if df is not None]
+        
+        if not available_datasets:
+            render_no_data_message()
+            return
+        
+        # Extract dataframes
+        routes_df = all_data.get('routes', (None, {}))[0]
+        braking_df = all_data.get('braking_hotspots', (None, {}))[0]
+        swerving_df = all_data.get('swerving_hotspots', (None, {}))[0]
+        time_series_df = all_data.get('time_series', (None, {}))[0]
+        
+        # Add filters in sidebar and get filter values
+        filters = render_overview_filters(routes_df, time_series_df)
+        
+        # Apply filters
+        try:
+            filtered_data = apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, filters)
+            routes_df, braking_df, swerving_df, time_series_df = filtered_data
+        except Exception as e:
+            logger.warning(f"Error applying filters: {e}")
+            # Continue with unfiltered data
+        
+        # Render main overview sections
+        render_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
+        render_safety_maps(braking_df, swerving_df, routes_df)
+        render_trends_analysis(time_series_df)
+        render_recent_alerts(braking_df, swerving_df)
+        
+    except Exception as e:
+        logger.error(f"Error in overview page: {e}")
+        st.error("⚠️ An error occurred while loading the overview page.")
+        st.info("Please check your data files and try refreshing the page.")
+        
+        # Show error details in expander for debugging
+        with st.expander("🔍 Error Details (for debugging)"):
+            st.code(str(e))
+            st.button("🔄 Retry", key="overview_retry")
 
 
 def render_no_data_message():
@@ -69,8 +84,10 @@ def render_no_data_message():
 
 
 def render_overview_filters(routes_df: Optional[pd.DataFrame], time_series_df: Optional[pd.DataFrame]):
-    """Render filters in the sidebar"""
+    """Render filters in the sidebar and return filter values"""
     st.sidebar.markdown("### 🎛️ Dashboard Filters")
+    
+    filters = {}
     
     # Date range filter
     if time_series_df is not None and len(time_series_df) > 0:
@@ -89,8 +106,11 @@ def render_overview_filters(routes_df: Optional[pd.DataFrame], time_series_df: O
         )
         
         if isinstance(date_range, tuple) and len(date_range) == 2:
-            st.session_state.overview_start_date = date_range[0]
-            st.session_state.overview_end_date = date_range[1]
+            filters['start_date'] = date_range[0]
+            filters['end_date'] = date_range[1]
+        else:
+            filters['start_date'] = default_start
+            filters['end_date'] = max_date
     
     # Route type filter
     if routes_df is not None and 'route_type' in routes_df.columns:
@@ -101,7 +121,7 @@ def render_overview_filters(routes_df: Optional[pd.DataFrame], time_series_df: O
             index=0,
             key="overview_route_type"
         )
-        st.session_state.overview_route_type = selected_route_type
+        filters['route_type'] = selected_route_type
     
     # Minimum severity filter
     severity_threshold = st.sidebar.slider(
@@ -113,30 +133,32 @@ def render_overview_filters(routes_df: Optional[pd.DataFrame], time_series_df: O
         help="Filter hotspots by minimum severity score",
         key="overview_severity"
     )
-    st.session_state.overview_severity = severity_threshold
+    filters['severity'] = severity_threshold
+    
+    return filters
 
 
-def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df):
+def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, filters):
     """Apply filters to all datasets"""
     
     # Apply date filter to time series
-    if time_series_df is not None and hasattr(st.session_state, 'overview_start_date'):
-        start_date = pd.to_datetime(st.session_state.overview_start_date)
-        end_date = pd.to_datetime(st.session_state.overview_end_date)
+    if time_series_df is not None and 'start_date' in filters:
+        start_date = pd.to_datetime(filters['start_date'])
+        end_date = pd.to_datetime(filters['end_date'])
         time_series_df = time_series_df[
             (time_series_df['date'] >= start_date) & 
             (time_series_df['date'] <= end_date)
         ]
     
     # Apply route type filter
-    if routes_df is not None and hasattr(st.session_state, 'overview_route_type'):
-        route_type = st.session_state.overview_route_type
-        if route_type != 'All':
+    if routes_df is not None and filters.get('route_type') != 'All':
+        route_type = filters.get('route_type')
+        if route_type and route_type != 'All':
             routes_df = routes_df[routes_df['route_type'] == route_type]
     
     # Apply severity filter to hotspots
-    if hasattr(st.session_state, 'overview_severity'):
-        severity_threshold = st.session_state.overview_severity
+    if 'severity' in filters:
+        severity_threshold = filters['severity']
         
         if braking_df is not None and 'severity_score' in braking_df.columns:
             braking_df = braking_df[braking_df['severity_score'] >= severity_threshold]
