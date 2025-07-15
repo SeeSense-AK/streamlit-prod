@@ -22,10 +22,10 @@ from app.pages.data_setup import render_data_setup_page
 
 # Import page modules
 from app.pages.overview import render_overview_page
+from app.pages.ml_insights import render_ml_insights_page
 from app.pages.data_setup import render_data_setup_page
 
 # Future page imports (we'll add these as we build them)
-# from app.pages.ml_insights import render_ml_insights_page
 # from app.pages.spatial_analysis import render_spatial_analysis_page
 # from app.pages.advanced_analytics import render_advanced_analytics_page
 # from app.pages.actionable_insights import render_actionable_insights_page
@@ -240,20 +240,13 @@ def main():
             else:
                 render_overview_page()
         
-        elif selected_page in ["ml_insights", "spatial_analysis", "advanced_analytics", "actionable_insights"]:
+        elif selected_page == "ml_insights":
             # Check if data is available
             data_status = data_processor.get_data_status()
             if data_status['available_datasets'] == 0:
                 render_data_not_available_message()
             else:
-                page_titles = {
-                    "ml_insights": "🔍 ML Insights",
-                    "spatial_analysis": "🗺️ Spatial Analysis", 
-                    "advanced_analytics": "📈 Advanced Analytics",
-                    "actionable_insights": "💡 Actionable Insights"
-                }
-                st.title(page_titles[selected_page])
-                st.info("This page will be implemented in the next development phase. Your data is ready!")
+                render_ml_insights_page()
         
         else:
             # Default to data setup if no valid page
