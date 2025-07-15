@@ -760,4 +760,211 @@ def perform_correlation_analysis(routes_df, braking_df, swerving_df):
                         'correlation': corr_val
                     })
         
-        top_correlations = pd.DataFrame(corr_
+        top_correlations = pd.DataFrame(corr_pairs).sort_values(
+            'correlation', key=abs, ascending=False
+        ).head(10)
+        
+        return {
+            'correlation_matrix': correlation_matrix,
+            'top_correlations': top_correlations
+        }
+        
+    except Exception as e:
+        logger.error(f"Error performing correlation analysis: {e}")
+        return None
+
+
+def analyze_temporal_behavior(time_series_df, clusters_df):
+    """Analyze temporal patterns in cyclist behavior"""
+    try:
+        # Create synthetic temporal behavior data
+        behaviors = clusters_df['behavior_cluster'].unique()
+        days = time_series_df['day_of_week'].unique()
+        
+        temporal_data = []
+        for behavior in behaviors:
+            for day in days:
+                # Simulate different patterns for different behaviors
+                base_rides = time_series_df[time_series_df['day_of_week'] == day]['total_rides'].mean()
+                
+                if 'Commuter' in behavior:
+                    # Higher on weekdays
+                    multiplier = 1.5 if day not in ['Saturday', 'Sunday'] else 0.7
+                elif 'Leisure' in behavior:
+                    # Higher on weekends
+                    multiplier = 0.8 if day not in ['Saturday', 'Sunday'] else 1.6
+                else:
+                    # Relatively stable
+                    multiplier = 1.0
+                
+                temporal_data.append({
+                    'day_of_week': day,
+                    'behavior_type': behavior,
+                    'avg_rides': base_rides * multiplier * 0.3  # Scale to represent portion
+                })
+        
+        return pd.DataFrame(temporal_data)
+        
+    except Exception as e:
+        logger.error(f"Error analyzing temporal behavior: {e}")
+        return None
+
+
+def analyze_safety_factors(routes_df, braking_df, swerving_df):
+    """Analyze key safety factors"""
+    try:
+        safety_factors = {}
+        
+        # Infrastructure analysis
+        if 'has_bike_lane' in routes_df.columns:
+            bike_lane_safety = routes_df.groupby('has_bike_lane').agg({
+                'popularity_rating': 'mean',
+                'distinct_cyclists': 'mean',
+                'avg_speed': 'mean'
+            }).round(2)
+            
+            safety_factors['infrastructure'] = {
+                'bike_lane_impact': bike_lane_safety,
+                'bike_lane_coverage': (routes_df['has_bike_lane'].sum() / len(routes_df)) * 100
+            }
+        
+        # Usage pattern analysis
+        if 'route_type' in routes_df.columns:
+            usage_safety = routes_df.groupby('route_type').agg({
+                'popularity_rating': 'mean',
+                'avg_speed': 'mean',
+                'distinct_cyclists': 'mean'
+            }).round(2)
+            
+            safety_factors['usage'] = {
+                'route_type_safety': usage_safety,
+                'usage_distribution': routes_df['route_type'].value_counts()
+            }
+        
+        # Location analysis
+        if braking_df is not None and swerving_df is not None:
+            road_type_analysis = {}
+            
+            if 'road_type' in braking_df.columns:
+                braking_by_road = braking_df.groupby('road_type').agg({
+                    'incidents_count': 'mean',
+                    'severity_score': 'mean'
+                }).round(2)
+                road_type_analysis['braking'] = braking_by_road
+            
+            if 'road_type' in swerving_df.columns:
+                swerving_by_road = swerving_df.groupby('road_type').agg({
+                    'incidents_count': 'mean', 
+                    'severity_score': 'mean'
+                }).round(2)
+                road_type_analysis['swerving'] = swerving_by_road
+            
+            safety_factors['location'] = road_type_analysis
+        
+        return safety_factors
+        
+    except Exception as e:
+        logger.error(f"Error analyzing safety factors: {e}")
+        return {}
+
+
+def render_infrastructure_analysis(infrastructure_data):
+    """Render infrastructure impact analysis"""
+    if not infrastructure_data:
+        st.info("No infrastructure data available for analysis")
+        return
+    
+    if 'bike_lane_impact' in infrastructure_data:
+        bike_lane_data = infrastructure_data['bike_lane_impact']
+        
+        # Bike lane impact chart
+        bike_lane_df = bike_lane_data.reset_index()
+        bike_lane_df['has_bike_lane'] = bike_lane_df['has_bike_lane'].map({
+            True: 'With Bike Lane',
+            False: 'Without Bike Lane'
+        })
+        
+        fig = px.bar(
+            bike_lane_df,
+            x='has_bike_lane',
+            y='popularity_rating',
+            title="Safety Impact of Bike Lanes",
+            labels={'popularity_rating': 'Average Popularity Rating'},
+            color='popularity_rating',
+            color_continuous_scale='Greens'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Coverage metric
+        coverage = infrastructure_data.get('bike_lane_coverage', 0)
+        st.metric("Bike Lane Coverage", f"{coverage:.1f}%")
+
+
+def render_usage_analysis(usage_data):
+    """Render usage pattern analysis"""
+    if not usage_data:
+        st.info("No usage pattern data available for analysis")
+        return
+    
+    if 'route_type_safety' in usage_data:
+        usage_safety = usage_data['route_type_safety'].reset_index()
+        
+        fig = px.bar(
+            usage_safety,
+            x='route_type',
+            y='popularity_rating',
+            title="Safety by Route Usage Type",
+            labels={'popularity_rating': 'Average Popularity Rating'},
+            color='avg_speed',
+            color_continuous_scale='Viridis'
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    
+    if 'usage_distribution' in usage_data:
+        usage_dist = usage_data['usage_distribution']
+        
+        fig = px.pie(
+            values=usage_dist.values,
+            names=usage_dist.index,
+            title="Route Usage Distribution"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+
+def render_location_analysis(location_data):
+    """Render location-based safety analysis"""
+    if not location_data:
+        st.info("No location data available for analysis")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if 'braking' in location_data:
+            braking_data = location_data['braking'].reset_index()
+            
+            fig = px.bar(
+                braking_data,
+                x='road_type',
+                y='severity_score',
+                title="Braking Incident Severity by Road Type",
+                labels={'severity_score': 'Average Severity Score'},
+                color='incidents_count',
+                color_continuous_scale='Reds'
+            )
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        if 'swerving' in location_data:
+            swerving_data = location_data['swerving'].reset_index()
+            
+            fig = px.bar(
+                swerving_data,
+                x='road_type',
+                y='severity_score',
+                title="Swerving Incident Severity by Road Type",
+                labels={'severity_score': 'Average Severity Score'},
+                color='incidents_count',
+                color_continuous_scale='Purples'
+            )
+            st.plotly_chart(fig, use_container_width=True)
