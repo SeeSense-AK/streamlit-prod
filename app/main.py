@@ -23,10 +23,10 @@ from app.pages.data_setup import render_data_setup_page
 # Import page modules
 from app.pages.overview import render_overview_page
 from app.pages.ml_insights import render_ml_insights_page
+from app.pages.spatial_analysis import render_spatial_analysis_page
 from app.pages.data_setup import render_data_setup_page
 
 # Future page imports (we'll add these as we build them)
-# from app.pages.spatial_analysis import render_spatial_analysis_page
 # from app.pages.advanced_analytics import render_advanced_analytics_page
 # from app.pages.actionable_insights import render_actionable_insights_page
 
