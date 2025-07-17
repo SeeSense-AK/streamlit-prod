@@ -34,6 +34,7 @@ PyYAML>=6.0
 python-dateutil>=2.8.0
 pytz>=2023.3
 requests>=2.31.0
+groq
 
 # Development & Deployment
 watchdog>=3.0.0
