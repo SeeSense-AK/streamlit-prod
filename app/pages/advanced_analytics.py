@@ -87,687 +87,6 @@ def render_advanced_analytics_page():
             render_statistical_testing(time_series_df, braking_df, swerving_df, analytics_options)
         
     except Exception as e:
-        logger.error(f"Error detecting spatial anomalies: {e}")
-        return None
-
-
-def create_spatial_anomaly_map(spatial_anomalies):
-    """Create spatial anomaly map"""
-    try:
-        fig = go.Figure()
-        
-        # Normal points
-        normal_points = spatial_anomalies[~spatial_anomalies['is_anomaly']]
-        if not normal_points.empty:
-            fig.add_trace(go.Scattermapbox(
-                lat=normal_points['lat'],
-                lon=normal_points['lon'],
-                mode='markers',
-                marker=dict(size=8, color='blue'),
-                name='Normal',
-                text=normal_points['type']
-            ))
-        
-        # Anomaly points
-        anomaly_points = spatial_anomalies[spatial_anomalies['is_anomaly']]
-        if not anomaly_points.empty:
-            fig.add_trace(go.Scattermapbox(
-                lat=anomaly_points['lat'],
-                lon=anomaly_points['lon'],
-                mode='markers',
-                marker=dict(size=15, color='red', symbol='diamond'),
-                name='Anomalies',
-                text=anomaly_points['type']
-            ))
-        
-        fig.update_layout(
-            mapbox=dict(
-                style="open-street-map",
-                center=dict(lat=spatial_anomalies['lat'].mean(), lon=spatial_anomalies['lon'].mean()),
-                zoom=12
-            ),
-            title="Spatial Anomaly Detection",
-            height=500
-        )
-        
-        return fig
-    
-    except Exception as e:
-        logger.error(f"Error creating spatial anomaly map: {e}")
-        return None
-
-
-def prepare_correlation_data(routes_df, braking_df, swerving_df, time_series_df):
-    """Prepare combined data for correlation analysis"""
-    try:
-        combined_data = pd.DataFrame()
-        
-        # Add time series data
-        if time_series_df is not None and len(time_series_df) > 0:
-            ts_numeric = time_series_df.select_dtypes(include=[np.number])
-            combined_data = pd.concat([combined_data, ts_numeric], axis=1)
-        
-        # Add route aggregations
-        if routes_df is not None and len(routes_df) > 0:
-            route_agg = routes_df.select_dtypes(include=[np.number]).mean().to_frame().T
-            route_agg.columns = [f'route_{col}' for col in route_agg.columns]
-            combined_data = pd.concat([combined_data, route_agg], axis=1)
-        
-        # Add hotspot aggregations
-        if braking_df is not None and len(braking_df) > 0:
-            braking_agg = braking_df.select_dtypes(include=[np.number]).mean().to_frame().T
-            braking_agg.columns = [f'braking_{col}' for col in braking_agg.columns]
-            combined_data = pd.concat([combined_data, braking_agg], axis=1)
-        
-        if swerving_df is not None and len(swerving_df) > 0:
-            swerving_agg = swerving_df.select_dtypes(include=[np.number]).mean().to_frame().T
-            swerving_agg.columns = [f'swerving_{col}' for col in swerving_agg.columns]
-            combined_data = pd.concat([combined_data, swerving_agg], axis=1)
-        
-        # Remove columns with all NaN values
-        combined_data = combined_data.dropna(axis=1, how='all')
-        
-        return combined_data if not combined_data.empty else None
-    
-    except Exception as e:
-        logger.error(f"Error preparing correlation data: {e}")
-        return None
-
-
-def find_significant_correlations(data, min_correlation, method):
-    """Find significant correlations above threshold"""
-    try:
-        # Calculate correlation matrix
-        corr_matrix = data.corr(method=method)
-        
-        # Extract significant correlations
-        significant_pairs = []
-        
-        for i in range(len(corr_matrix.columns)):
-            for j in range(i+1, len(corr_matrix.columns)):
-                corr_value = corr_matrix.iloc[i, j]
-                
-                if abs(corr_value) >= min_correlation:
-                    significant_pairs.append({
-                        'Feature 1': corr_matrix.columns[i],
-                        'Feature 2': corr_matrix.columns[j],
-                        'Correlation': corr_value,
-                        'Abs Correlation': abs(corr_value)
-                    })
-        
-        # Create DataFrame and sort by absolute correlation
-        significant_df = pd.DataFrame(significant_pairs)
-        
-        if not significant_df.empty:
-            significant_df = significant_df.sort_values('Abs Correlation', ascending=False)
-            significant_df = significant_df.drop('Abs Correlation', axis=1)
-            significant_df['Correlation'] = significant_df['Correlation'].round(3)
-        
-        return significant_df
-    
-    except Exception as e:
-        logger.error(f"Error finding significant correlations: {e}")
-        return pd.DataFrame()
-
-
-def prepare_modeling_data(time_series_df, routes_df):
-    """Prepare data for predictive modeling"""
-    try:
-        # Use time series data as base
-        modeling_data = time_series_df.copy()
-        
-        # Add date features
-        if 'date' in modeling_data.columns:
-            modeling_data['date'] = pd.to_datetime(modeling_data['date'])
-            modeling_data['day_of_week'] = modeling_data['date'].dt.dayofweek
-            modeling_data['month'] = modeling_data['date'].dt.month
-            modeling_data['day_of_year'] = modeling_data['date'].dt.dayofyear
-        
-        # Add lagged features
-        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns
-        for col in numeric_cols:
-            if col not in ['day_of_week', 'month', 'day_of_year']:
-                modeling_data[f'{col}_lag1'] = modeling_data[col].shift(1)
-                modeling_data[f'{col}_lag7'] = modeling_data[col].shift(7)
-        
-        # Remove rows with NaN values
-        modeling_data = modeling_data.dropna()
-        
-        return modeling_data if not modeling_data.empty else None
-    
-    except Exception as e:
-        logger.error(f"Error preparing modeling data: {e}")
-        return None
-
-
-def render_linear_regression_analysis(modeling_data):
-    """Render linear regression analysis"""
-    try:
-        st.markdown("#### 📊 Linear Regression Analysis")
-        
-        # Feature selection
-        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Target variable selection
-        target_col = st.selectbox("Select Target Variable", numeric_cols, key="lr_target")
-        
-        # Feature selection
-        feature_cols = st.multiselect(
-            "Select Features",
-            [col for col in numeric_cols if col != target_col],
-            default=[col for col in numeric_cols if col != target_col][:5],
-            key="lr_features"
-        )
-        
-        if not feature_cols:
-            st.warning("Please select at least one feature")
-            return
-        
-        # Prepare data
-        X = modeling_data[feature_cols]
-        y = modeling_data[target_col]
-        
-        # Split data
-        train_size = int(len(X) * 0.8)
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
-        
-        # Train model
-        model = LinearRegression()
-        model.fit(X_train, y_train)
-        
-        # Predictions
-        y_pred = model.predict(X_test)
-        
-        # Metrics
-        mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        
-        # Display results
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("R² Score", f"{r2:.3f}")
-            st.metric("MSE", f"{mse:.3f}")
-        
-        with col2:
-            # Feature importance
-            feature_importance = pd.DataFrame({
-                'Feature': feature_cols,
-                'Coefficient': model.coef_,
-                'Abs_Coefficient': np.abs(model.coef_)
-            }).sort_values('Abs_Coefficient', ascending=False)
-            
-            st.markdown("**Feature Importance:**")
-            st.dataframe(feature_importance[['Feature', 'Coefficient']], use_container_width=True)
-        
-        # Prediction vs Actual plot
-        fig = go.Figure()
-        
-        fig.add_trace(go.Scatter(
-            x=y_test,
-            y=y_pred,
-            mode='markers',
-            name='Predictions',
-            marker=dict(color='blue')
-        ))
-        
-        # Perfect prediction line
-        min_val = min(y_test.min(), y_pred.min())
-        max_val = max(y_test.max(), y_pred.max())
-        fig.add_trace(go.Scatter(
-            x=[min_val, max_val],
-            y=[min_val, max_val],
-            mode='lines',
-            name='Perfect Prediction',
-            line=dict(color='red', dash='dash')
-        ))
-        
-        fig.update_layout(
-            title="Predicted vs Actual Values",
-            xaxis_title="Actual Values",
-            yaxis_title="Predicted Values",
-            height=400
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
-    
-    except Exception as e:
-        logger.error(f"Error in linear regression analysis: {e}")
-        st.error("Failed to perform linear regression analysis")
-
-
-def render_random_forest_analysis(modeling_data):
-    """Render random forest analysis"""
-    try:
-        from sklearn.ensemble import RandomForestRegressor
-        
-        st.markdown("#### 🌲 Random Forest Analysis")
-        
-        # Feature selection
-        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns.tolist()
-        
-        # Target variable selection
-        target_col = st.selectbox("Select Target Variable", numeric_cols, key="rf_target")
-        
-        # Feature selection
-        feature_cols = st.multiselect(
-            "Select Features",
-            [col for col in numeric_cols if col != target_col],
-            default=[col for col in numeric_cols if col != target_col][:5],
-            key="rf_features"
-        )
-        
-        if not feature_cols:
-            st.warning("Please select at least one feature")
-            return
-        
-        # Model parameters
-        n_estimators = st.slider("Number of Trees", 10, 200, 100)
-        max_depth = st.slider("Max Depth", 3, 20, 10)
-        
-        # Prepare data
-        X = modeling_data[feature_cols]
-        y = modeling_data[target_col]
-        
-        # Split data
-        train_size = int(len(X) * 0.8)
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
-        
-        # Train model
-        model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
-        model.fit(X_train, y_train)
-        
-        # Predictions
-        y_pred = model.predict(X_test)
-        
-        # Metrics
-        mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        
-        # Display results
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.metric("R² Score", f"{r2:.3f}")
-            st.metric("MSE", f"{mse:.3f}")
-        
-        with col2:
-            # Feature importance
-            feature_importance = pd.DataFrame({
-                'Feature': feature_cols,
-                'Importance': model.feature_importances_
-            }).sort_values('Importance', ascending=False)
-            
-            st.markdown("**Feature Importance:**")
-            st.dataframe(feature_importance, use_container_width=True)
-        
-        # Feature importance plot
-        fig = px.bar(
-            feature_importance,
-            x='Importance',
-            y='Feature',
-            orientation='h',
-            title="Feature Importance"
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    except ImportError:
-        st.error("Random Forest requires scikit-learn to be installed")
-    except Exception as e:
-        logger.error(f"Error in random forest analysis: {e}")
-        st.error("Failed to perform random forest analysis")
-
-
-def render_time_series_forecast(time_series_df, analytics_options):
-    """Render time series forecasting"""
-    try:
-        st.markdown("#### 🔮 Time Series Forecasting")
-        
-        # Prepare data
-        ts_data = prepare_time_series_data(time_series_df)
-        
-        if ts_data is None:
-            st.error("Failed to prepare time series data")
-            return
-        
-        # Select column to forecast
-        numeric_cols = ts_data.select_dtypes(include=[np.number]).columns.tolist()
-        target_col = st.selectbox("Select Variable to Forecast", numeric_cols, key="ts_forecast")
-        
-        # Forecast parameters
-        forecast_periods = analytics_options['forecast_periods']
-        
-        # Create forecast
-        forecast_fig, forecast_metrics = create_forecast_chart(ts_data, target_col, forecast_periods)
-        
-        if forecast_fig is not None:
-            st.plotly_chart(forecast_fig, use_container_width=True)
-            
-            if forecast_metrics:
-                metric_cols = st.columns(len(forecast_metrics))
-                for i, (metric_name, metric_value) in enumerate(forecast_metrics.items()):
-                    with metric_cols[i]:
-                        st.metric(metric_name, str(metric_value))
-        else:
-            st.error("Failed to create forecast")
-    
-    except Exception as e:
-        logger.error(f"Error in time series forecasting: {e}")
-        st.error("Failed to perform time series forecasting")
-
-
-def prepare_statistical_test_data(time_series_df, braking_df, swerving_df):
-    """Prepare data for statistical testing"""
-    try:
-        test_data = {}
-        
-        # Time series data
-        if time_series_df is not None and len(time_series_df) > 0:
-            test_data['time_series'] = time_series_df.copy()
-        
-        # Hotspot data
-        if braking_df is not None and len(braking_df) > 0:
-            test_data['braking'] = braking_df.copy()
-        
-        if swerving_df is not None and len(swerving_df) > 0:
-            test_data['swerving'] = swerving_df.copy()
-        
-        return test_data if test_data else None
-    
-    except Exception as e:
-        logger.error(f"Error preparing statistical test data: {e}")
-        return None
-
-
-def render_t_test_analysis(test_data, analytics_options):
-    """Render t-test analysis"""
-    try:
-        st.markdown("#### 📊 T-Test Analysis")
-        
-        # Select dataset
-        available_datasets = list(test_data.keys())
-        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="ttest_dataset")
-        
-        data = test_data[selected_dataset]
-        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-        
-        if len(numeric_cols) < 1:
-            st.warning("No numeric columns available for t-test")
-            return
-        
-        # Select variable
-        test_variable = st.selectbox("Select Variable", numeric_cols, key="ttest_variable")
-        
-        # Test type
-        test_type = st.selectbox("Test Type", ["One-sample", "Two-sample"], key="ttest_type")
-        
-        if test_type == "One-sample":
-            # One-sample t-test
-            test_value = st.number_input("Test Value", value=0.0, key="ttest_value")
-            
-            sample_data = data[test_variable].dropna()
-            t_stat, p_value = stats.ttest_1samp(sample_data, test_value)
-            
-            st.markdown("**Results:**")
-            st.metric("t-statistic", f"{t_stat:.4f}")
-            st.metric("p-value", f"{p_value:.4f}")
-            
-            # Interpretation
-            alpha = 1 - analytics_options['confidence_level']
-            if p_value < alpha:
-                st.success(f"Reject null hypothesis (p < {alpha:.3f})")
-            else:
-                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f})")
-        
-        elif test_type == "Two-sample":
-            # Two-sample t-test
-            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-            if not categorical_cols:
-                st.warning("No categorical columns available for grouping")
-                return
-            
-            group_col = st.selectbox("Select Grouping Variable", categorical_cols, key="ttest_group")
-            
-            # Get unique groups
-            groups = data[group_col].unique()
-            if len(groups) < 2:
-                st.warning("Need at least 2 groups for two-sample t-test")
-                return
-            
-            # Select two groups
-            group1 = st.selectbox("Group 1", groups, key="ttest_group1")
-            group2 = st.selectbox("Group 2", [g for g in groups if g != group1], key="ttest_group2")
-            
-            # Perform t-test
-            sample1 = data[data[group_col] == group1][test_variable].dropna()
-            sample2 = data[data[group_col] == group2][test_variable].dropna()
-            
-            t_stat, p_value = stats.ttest_ind(sample1, sample2)
-            
-            st.markdown("**Results:**")
-            st.metric("t-statistic", f"{t_stat:.4f}")
-            st.metric("p-value", f"{p_value:.4f}")
-            
-            # Group statistics
-            col1, col2 = st.columns(2)
-            with col1:
-                st.metric(f"{group1} Mean", f"{sample1.mean():.4f}")
-                st.metric(f"{group1} Std", f"{sample1.std():.4f}")
-            
-            with col2:
-                st.metric(f"{group2} Mean", f"{sample2.mean():.4f}")
-                st.metric(f"{group2} Std", f"{sample2.std():.4f}")
-            
-            # Interpretation
-            alpha = 1 - analytics_options['confidence_level']
-            if p_value < alpha:
-                st.success(f"Reject null hypothesis (p < {alpha:.3f})")
-            else:
-                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f})")
-    
-    except Exception as e:
-        logger.error(f"Error in t-test analysis: {e}")
-        st.error("Failed to perform t-test analysis")
-
-
-def render_anova_analysis(test_data, analytics_options):
-    """Render ANOVA analysis"""
-    try:
-        st.markdown("#### 📊 ANOVA Analysis")
-        
-        # Select dataset
-        available_datasets = list(test_data.keys())
-        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="anova_dataset")
-        
-        data = test_data[selected_dataset]
-        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-        
-        if len(numeric_cols) < 1:
-            st.warning("No numeric columns available for ANOVA")
-            return
-        
-        if len(categorical_cols) < 1:
-            st.warning("No categorical columns available for grouping")
-            return
-        
-        # Select variables
-        dependent_var = st.selectbox("Select Dependent Variable", numeric_cols, key="anova_dependent")
-        grouping_var = st.selectbox("Select Grouping Variable", categorical_cols, key="anova_grouping")
-        
-        # Prepare data for ANOVA
-        groups = []
-        group_names = []
-        
-        for group_name in data[grouping_var].unique():
-            group_data = data[data[grouping_var] == group_name][dependent_var].dropna()
-            if len(group_data) > 0:
-                groups.append(group_data)
-                group_names.append(group_name)
-        
-        if len(groups) < 2:
-            st.warning("Need at least 2 groups for ANOVA")
-            return
-        
-        # Perform ANOVA
-        f_stat, p_value = stats.f_oneway(*groups)
-        
-        st.markdown("**Results:**")
-        st.metric("F-statistic", f"{f_stat:.4f}")
-        st.metric("p-value", f"{p_value:.4f}")
-        
-        # Group statistics
-        group_stats = []
-        for i, group_name in enumerate(group_names):
-            group_stats.append({
-                'Group': group_name,
-                'Mean': groups[i].mean(),
-                'Std': groups[i].std(),
-                'Count': len(groups[i])
-            })
-        
-        group_stats_df = pd.DataFrame(group_stats)
-        st.dataframe(group_stats_df, use_container_width=True)
-        
-        # Interpretation
-        alpha = 1 - analytics_options['confidence_level']
-        if p_value < alpha:
-            st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Groups have significantly different means")
-        else:
-            st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - No significant difference between groups")
-    
-    except Exception as e:
-        logger.error(f"Error in ANOVA analysis: {e}")
-        st.error("Failed to perform ANOVA analysis")
-
-
-def render_chi_square_analysis(test_data, analytics_options):
-    """Render chi-square analysis"""
-    try:
-        st.markdown("#### 📊 Chi-Square Analysis")
-        
-        # Select dataset
-        available_datasets = list(test_data.keys())
-        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="chi_dataset")
-        
-        data = test_data[selected_dataset]
-        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-        
-        if len(categorical_cols) < 2:
-            st.warning("Need at least 2 categorical columns for chi-square test")
-            return
-        
-        # Select variables
-        var1 = st.selectbox("Select Variable 1", categorical_cols, key="chi_var1")
-        var2 = st.selectbox("Select Variable 2", [col for col in categorical_cols if col != var1], key="chi_var2")
-        
-        # Create contingency table
-        contingency_table = pd.crosstab(data[var1], data[var2])
-        
-        # Perform chi-square test
-        chi2_stat, p_value, dof, expected = stats.chi2_contingency(contingency_table)
-        
-        st.markdown("**Contingency Table:**")
-        st.dataframe(contingency_table, use_container_width=True)
-        
-        st.markdown("**Results:**")
-        st.metric("Chi-square statistic", f"{chi2_stat:.4f}")
-        st.metric("p-value", f"{p_value:.4f}")
-        st.metric("Degrees of freedom", dof)
-        
-        # Interpretation
-        alpha = 1 - analytics_options['confidence_level']
-        if p_value < alpha:
-            st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Variables are associated")
-        else:
-            st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - No significant association")
-    
-    except Exception as e:
-        logger.error(f"Error in chi-square analysis: {e}")
-        st.error("Failed to perform chi-square analysis")
-
-
-def render_ks_test_analysis(test_data, analytics_options):
-    """Render Kolmogorov-Smirnov test analysis"""
-    try:
-        st.markdown("#### 📊 Kolmogorov-Smirnov Test")
-        
-        # Select dataset
-        available_datasets = list(test_data.keys())
-        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="ks_dataset")
-        
-        data = test_data[selected_dataset]
-        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
-        
-        if len(numeric_cols) < 1:
-            st.warning("No numeric columns available for KS test")
-            return
-        
-        # Select variable
-        test_variable = st.selectbox("Select Variable", numeric_cols, key="ks_variable")
-        
-        # Test type
-        test_type = st.selectbox("Test Type", ["Normality", "Two-sample"], key="ks_type")
-        
-        sample_data = data[test_variable].dropna()
-        
-        if test_type == "Normality":
-            # Test for normality
-            ks_stat, p_value = stats.kstest(sample_data, 'norm', args=(sample_data.mean(), sample_data.std()))
-            
-            st.markdown("**Results:**")
-            st.metric("KS statistic", f"{ks_stat:.4f}")
-            st.metric("p-value", f"{p_value:.4f}")
-            
-            # Interpretation
-            alpha = 1 - analytics_options['confidence_level']
-            if p_value < alpha:
-                st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Data is not normally distributed")
-            else:
-                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - Data may be normally distributed")
-        
-        elif test_type == "Two-sample":
-            # Two-sample KS test
-            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
-            if not categorical_cols:
-                st.warning("No categorical columns available for grouping")
-                return
-            
-            group_col = st.selectbox("Select Grouping Variable", categorical_cols, key="ks_group")
-            
-            # Get unique groups
-            groups = data[group_col].unique()
-            if len(groups) < 2:
-                st.warning("Need at least 2 groups for two-sample KS test")
-                return
-            
-            # Select two groups
-            group1 = st.selectbox("Group 1", groups, key="ks_group1")
-            group2 = st.selectbox("Group 2", [g for g in groups if g != group1], key="ks_group2")
-            
-            # Perform KS test
-            sample1 = data[data[group_col] == group1][test_variable].dropna()
-            sample2 = data[data[group_col] == group2][test_variable].dropna()
-            
-            ks_stat, p_value = stats.ks_2samp(sample1, sample2)
-            
-            st.markdown("**Results:**")
-            st.metric("KS statistic", f"{ks_stat:.4f}")
-            st.metric("p-value", f"{p_value:.4f}")
-            
-            # Interpretation
-            alpha = 1 - analytics_options['confidence_level']
-            if p_value < alpha:
-                st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Samples come from different distributions")
-            else:
-                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - Samples may come from same distribution")
-    
-    except Exception as e:
-        logger.error(f"Error in KS test analysis: {e}")
-        st.error("Failed to perform KS test analysis") e:
         logger.error(f"Error in advanced analytics page: {e}")
         st.error("⚠️ An error occurred while loading advanced analytics.")
         st.info("Please check your data files and try refreshing the page.")
@@ -1486,4 +805,685 @@ def detect_spatial_anomalies(braking_df, swerving_df, contamination):
         
         return combined_spatial
     
-    except Exception as
+    except Exception as e:
+        logger.error(f"Error detecting spatial anomalies: {e}")
+        return None
+
+
+def create_spatial_anomaly_map(spatial_anomalies):
+    """Create spatial anomaly map"""
+    try:
+        fig = go.Figure()
+        
+        # Normal points
+        normal_points = spatial_anomalies[~spatial_anomalies['is_anomaly']]
+        if not normal_points.empty:
+            fig.add_trace(go.Scattermapbox(
+                lat=normal_points['lat'],
+                lon=normal_points['lon'],
+                mode='markers',
+                marker=dict(size=8, color='blue'),
+                name='Normal',
+                text=normal_points['type']
+            ))
+        
+        # Anomaly points
+        anomaly_points = spatial_anomalies[spatial_anomalies['is_anomaly']]
+        if not anomaly_points.empty:
+            fig.add_trace(go.Scattermapbox(
+                lat=anomaly_points['lat'],
+                lon=anomaly_points['lon'],
+                mode='markers',
+                marker=dict(size=15, color='red', symbol='diamond'),
+                name='Anomalies',
+                text=anomaly_points['type']
+            ))
+        
+        fig.update_layout(
+            mapbox=dict(
+                style="open-street-map",
+                center=dict(lat=spatial_anomalies['lat'].mean(), lon=spatial_anomalies['lon'].mean()),
+                zoom=12
+            ),
+            title="Spatial Anomaly Detection",
+            height=500
+        )
+        
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Error creating spatial anomaly map: {e}")
+        return None
+
+
+def prepare_correlation_data(routes_df, braking_df, swerving_df, time_series_df):
+    """Prepare combined data for correlation analysis"""
+    try:
+        combined_data = pd.DataFrame()
+        
+        # Add time series data
+        if time_series_df is not None and len(time_series_df) > 0:
+            ts_numeric = time_series_df.select_dtypes(include=[np.number])
+            combined_data = pd.concat([combined_data, ts_numeric], axis=1)
+        
+        # Add route aggregations
+        if routes_df is not None and len(routes_df) > 0:
+            route_agg = routes_df.select_dtypes(include=[np.number]).mean().to_frame().T
+            route_agg.columns = [f'route_{col}' for col in route_agg.columns]
+            combined_data = pd.concat([combined_data, route_agg], axis=1)
+        
+        # Add hotspot aggregations
+        if braking_df is not None and len(braking_df) > 0:
+            braking_agg = braking_df.select_dtypes(include=[np.number]).mean().to_frame().T
+            braking_agg.columns = [f'braking_{col}' for col in braking_agg.columns]
+            combined_data = pd.concat([combined_data, braking_agg], axis=1)
+        
+        if swerving_df is not None and len(swerving_df) > 0:
+            swerving_agg = swerving_df.select_dtypes(include=[np.number]).mean().to_frame().T
+            swerving_agg.columns = [f'swerving_{col}' for col in swerving_agg.columns]
+            combined_data = pd.concat([combined_data, swerving_agg], axis=1)
+        
+        # Remove columns with all NaN values
+        combined_data = combined_data.dropna(axis=1, how='all')
+        
+        return combined_data if not combined_data.empty else None
+    
+    except Exception as e:
+        logger.error(f"Error preparing correlation data: {e}")
+        return None
+
+
+def find_significant_correlations(data, min_correlation, method):
+    """Find significant correlations above threshold"""
+    try:
+        # Calculate correlation matrix
+        corr_matrix = data.corr(method=method)
+        
+        # Extract significant correlations
+        significant_pairs = []
+        
+        for i in range(len(corr_matrix.columns)):
+            for j in range(i+1, len(corr_matrix.columns)):
+                corr_value = corr_matrix.iloc[i, j]
+                
+                if abs(corr_value) >= min_correlation:
+                    significant_pairs.append({
+                        'Feature 1': corr_matrix.columns[i],
+                        'Feature 2': corr_matrix.columns[j],
+                        'Correlation': corr_value,
+                        'Abs Correlation': abs(corr_value)
+                    })
+        
+        # Create DataFrame and sort by absolute correlation
+        significant_df = pd.DataFrame(significant_pairs)
+        
+        if not significant_df.empty:
+            significant_df = significant_df.sort_values('Abs Correlation', ascending=False)
+            significant_df = significant_df.drop('Abs Correlation', axis=1)
+            significant_df['Correlation'] = significant_df['Correlation'].round(3)
+        
+        return significant_df
+    
+    except Exception as e:
+        logger.error(f"Error finding significant correlations: {e}")
+        return pd.DataFrame()
+
+
+def prepare_modeling_data(time_series_df, routes_df):
+    """Prepare data for predictive modeling"""
+    try:
+        # Use time series data as base
+        modeling_data = time_series_df.copy()
+        
+        # Add date features
+        if 'date' in modeling_data.columns:
+            modeling_data['date'] = pd.to_datetime(modeling_data['date'])
+            modeling_data['day_of_week'] = modeling_data['date'].dt.dayofweek
+            modeling_data['month'] = modeling_data['date'].dt.month
+            modeling_data['day_of_year'] = modeling_data['date'].dt.dayofyear
+        
+        # Add lagged features
+        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns
+        for col in numeric_cols:
+            if col not in ['day_of_week', 'month', 'day_of_year']:
+                modeling_data[f'{col}_lag1'] = modeling_data[col].shift(1)
+                modeling_data[f'{col}_lag7'] = modeling_data[col].shift(7)
+        
+        # Remove rows with NaN values
+        modeling_data = modeling_data.dropna()
+        
+        return modeling_data if not modeling_data.empty else None
+    
+    except Exception as e:
+        logger.error(f"Error preparing modeling data: {e}")
+        return None
+
+
+def render_linear_regression_analysis(modeling_data):
+    """Render linear regression analysis"""
+    try:
+        st.markdown("#### 📊 Linear Regression Analysis")
+        
+        # Feature selection
+        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Target variable selection
+        target_col = st.selectbox("Select Target Variable", numeric_cols, key="lr_target")
+        
+        # Feature selection
+        feature_cols = st.multiselect(
+            "Select Features",
+            [col for col in numeric_cols if col != target_col],
+            default=[col for col in numeric_cols if col != target_col][:5],
+            key="lr_features"
+        )
+        
+        if not feature_cols:
+            st.warning("Please select at least one feature")
+            return
+        
+        # Prepare data
+        X = modeling_data[feature_cols]
+        y = modeling_data[target_col]
+        
+        # Split data
+        train_size = int(len(X) * 0.8)
+        X_train, X_test = X[:train_size], X[train_size:]
+        y_train, y_test = y[:train_size], y[train_size:]
+        
+        # Train model
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+        
+        # Predictions
+        y_pred = model.predict(X_test)
+        
+        # Metrics
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        # Display results
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("R² Score", f"{r2:.3f}")
+            st.metric("MSE", f"{mse:.3f}")
+        
+        with col2:
+            # Feature importance
+            feature_importance = pd.DataFrame({
+                'Feature': feature_cols,
+                'Coefficient': model.coef_,
+                'Abs_Coefficient': np.abs(model.coef_)
+            }).sort_values('Abs_Coefficient', ascending=False)
+            
+            st.markdown("**Feature Importance:**")
+            st.dataframe(feature_importance[['Feature', 'Coefficient']], use_container_width=True)
+        
+        # Prediction vs Actual plot
+        fig = go.Figure()
+        
+        fig.add_trace(go.Scatter(
+            x=y_test,
+            y=y_pred,
+            mode='markers',
+            name='Predictions',
+            marker=dict(color='blue')
+        ))
+        
+        # Perfect prediction line
+        min_val = min(y_test.min(), y_pred.min())
+        max_val = max(y_test.max(), y_pred.max())
+        fig.add_trace(go.Scatter(
+            x=[min_val, max_val],
+            y=[min_val, max_val],
+            mode='lines',
+            name='Perfect Prediction',
+            line=dict(color='red', dash='dash')
+        ))
+        
+        fig.update_layout(
+            title="Predicted vs Actual Values",
+            xaxis_title="Actual Values",
+            yaxis_title="Predicted Values",
+            height=400
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    
+    except Exception as e:
+        logger.error(f"Error in linear regression analysis: {e}")
+        st.error("Failed to perform linear regression analysis")
+
+
+def render_random_forest_analysis(modeling_data):
+    """Render random forest analysis"""
+    try:
+        from sklearn.ensemble import RandomForestRegressor
+        
+        st.markdown("#### 🌲 Random Forest Analysis")
+        
+        # Feature selection
+        numeric_cols = modeling_data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        # Target variable selection
+        target_col = st.selectbox("Select Target Variable", numeric_cols, key="rf_target")
+        
+        # Feature selection
+        feature_cols = st.multiselect(
+            "Select Features",
+            [col for col in numeric_cols if col != target_col],
+            default=[col for col in numeric_cols if col != target_col][:5],
+            key="rf_features"
+        )
+        
+        if not feature_cols:
+            st.warning("Please select at least one feature")
+            return
+        
+        # Model parameters
+        n_estimators = st.slider("Number of Trees", 10, 200, 100)
+        max_depth = st.slider("Max Depth", 3, 20, 10)
+        
+        # Prepare data
+        X = modeling_data[feature_cols]
+        y = modeling_data[target_col]
+        
+        # Split data
+        train_size = int(len(X) * 0.8)
+        X_train, X_test = X[:train_size], X[train_size:]
+        y_train, y_test = y[:train_size], y[train_size:]
+        
+        # Train model
+        model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=42)
+        model.fit(X_train, y_train)
+        
+        # Predictions
+        y_pred = model.predict(X_test)
+        
+        # Metrics
+        mse = mean_squared_error(y_test, y_pred)
+        r2 = r2_score(y_test, y_pred)
+        
+        # Display results
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("R² Score", f"{r2:.3f}")
+            st.metric("MSE", f"{mse:.3f}")
+        
+        with col2:
+            # Feature importance
+            feature_importance = pd.DataFrame({
+                'Feature': feature_cols,
+                'Importance': model.feature_importances_
+            }).sort_values('Importance', ascending=False)
+            
+            st.markdown("**Feature Importance:**")
+            st.dataframe(feature_importance, use_container_width=True)
+        
+        # Feature importance plot
+        fig = px.bar(
+            feature_importance,
+            x='Importance',
+            y='Feature',
+            orientation='h',
+            title="Feature Importance"
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+    
+    except ImportError:
+        st.error("Random Forest requires scikit-learn to be installed")
+    except Exception as e:
+        logger.error(f"Error in random forest analysis: {e}")
+        st.error("Failed to perform random forest analysis")
+
+
+def render_time_series_forecast(time_series_df, analytics_options):
+    """Render time series forecasting"""
+    try:
+        st.markdown("#### 🔮 Time Series Forecasting")
+        
+        # Prepare data
+        ts_data = prepare_time_series_data(time_series_df)
+        
+        if ts_data is None:
+            st.error("Failed to prepare time series data")
+            return
+        
+        # Select column to forecast
+        numeric_cols = ts_data.select_dtypes(include=[np.number]).columns.tolist()
+        target_col = st.selectbox("Select Variable to Forecast", numeric_cols, key="ts_forecast")
+        
+        # Forecast parameters
+        forecast_periods = analytics_options['forecast_periods']
+        
+        # Create forecast
+        forecast_fig, forecast_metrics = create_forecast_chart(ts_data, target_col, forecast_periods)
+        
+        if forecast_fig is not None:
+            st.plotly_chart(forecast_fig, use_container_width=True)
+            
+            if forecast_metrics:
+                metric_cols = st.columns(len(forecast_metrics))
+                for i, (metric_name, metric_value) in enumerate(forecast_metrics.items()):
+                    with metric_cols[i]:
+                        st.metric(metric_name, str(metric_value))
+        else:
+            st.error("Failed to create forecast")
+    
+    except Exception as e:
+        logger.error(f"Error in time series forecasting: {e}")
+        st.error("Failed to perform time series forecasting")
+
+
+def prepare_statistical_test_data(time_series_df, braking_df, swerving_df):
+    """Prepare data for statistical testing"""
+    try:
+        test_data = {}
+        
+        # Time series data
+        if time_series_df is not None and len(time_series_df) > 0:
+            test_data['time_series'] = time_series_df.copy()
+        
+        # Hotspot data
+        if braking_df is not None and len(braking_df) > 0:
+            test_data['braking'] = braking_df.copy()
+        
+        if swerving_df is not None and len(swerving_df) > 0:
+            test_data['swerving'] = swerving_df.copy()
+        
+        return test_data if test_data else None
+    
+    except Exception as e:
+        logger.error(f"Error preparing statistical test data: {e}")
+        return None
+
+
+def render_t_test_analysis(test_data, analytics_options):
+    """Render t-test analysis"""
+    try:
+        st.markdown("#### 📊 T-Test Analysis")
+        
+        # Select dataset
+        available_datasets = list(test_data.keys())
+        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="ttest_dataset")
+        
+        data = test_data[selected_dataset]
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) < 1:
+            st.warning("No numeric columns available for t-test")
+            return
+        
+        # Select variable
+        test_variable = st.selectbox("Select Variable", numeric_cols, key="ttest_variable")
+        
+        # Test type
+        test_type = st.selectbox("Test Type", ["One-sample", "Two-sample"], key="ttest_type")
+        
+        if test_type == "One-sample":
+            # One-sample t-test
+            test_value = st.number_input("Test Value", value=0.0, key="ttest_value")
+            
+            sample_data = data[test_variable].dropna()
+            t_stat, p_value = stats.ttest_1samp(sample_data, test_value)
+            
+            st.markdown("**Results:**")
+            st.metric("t-statistic", f"{t_stat:.4f}")
+            st.metric("p-value", f"{p_value:.4f}")
+            
+            # Interpretation
+            alpha = 1 - analytics_options['confidence_level']
+            if p_value < alpha:
+                st.success(f"Reject null hypothesis (p < {alpha:.3f})")
+            else:
+                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f})")
+        
+        elif test_type == "Two-sample":
+            # Two-sample t-test
+            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+            if not categorical_cols:
+                st.warning("No categorical columns available for grouping")
+                return
+            
+            group_col = st.selectbox("Select Grouping Variable", categorical_cols, key="ttest_group")
+            
+            # Get unique groups
+            groups = data[group_col].unique()
+            if len(groups) < 2:
+                st.warning("Need at least 2 groups for two-sample t-test")
+                return
+            
+            # Select two groups
+            group1 = st.selectbox("Group 1", groups, key="ttest_group1")
+            group2 = st.selectbox("Group 2", [g for g in groups if g != group1], key="ttest_group2")
+            
+            # Perform t-test
+            sample1 = data[data[group_col] == group1][test_variable].dropna()
+            sample2 = data[data[group_col] == group2][test_variable].dropna()
+            
+            t_stat, p_value = stats.ttest_ind(sample1, sample2)
+            
+            st.markdown("**Results:**")
+            st.metric("t-statistic", f"{t_stat:.4f}")
+            st.metric("p-value", f"{p_value:.4f}")
+            
+            # Group statistics
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(f"{group1} Mean", f"{sample1.mean():.4f}")
+                st.metric(f"{group1} Std", f"{sample1.std():.4f}")
+            
+            with col2:
+                st.metric(f"{group2} Mean", f"{sample2.mean():.4f}")
+                st.metric(f"{group2} Std", f"{sample2.std():.4f}")
+            
+            # Interpretation
+            alpha = 1 - analytics_options['confidence_level']
+            if p_value < alpha:
+                st.success(f"Reject null hypothesis (p < {alpha:.3f})")
+            else:
+                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f})")
+    
+    except Exception as e:
+        logger.error(f"Error in t-test analysis: {e}")
+        st.error("Failed to perform t-test analysis")
+
+
+def render_anova_analysis(test_data, analytics_options):
+    """Render ANOVA analysis"""
+    try:
+        st.markdown("#### 📊 ANOVA Analysis")
+        
+        # Select dataset
+        available_datasets = list(test_data.keys())
+        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="anova_dataset")
+        
+        data = test_data[selected_dataset]
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+        
+        if len(numeric_cols) < 1:
+            st.warning("No numeric columns available for ANOVA")
+            return
+        
+        if len(categorical_cols) < 1:
+            st.warning("No categorical columns available for grouping")
+            return
+        
+        # Select variables
+        dependent_var = st.selectbox("Select Dependent Variable", numeric_cols, key="anova_dependent")
+        grouping_var = st.selectbox("Select Grouping Variable", categorical_cols, key="anova_grouping")
+        
+        # Prepare data for ANOVA
+        groups = []
+        group_names = []
+        
+        for group_name in data[grouping_var].unique():
+            group_data = data[data[grouping_var] == group_name][dependent_var].dropna()
+            if len(group_data) > 0:
+                groups.append(group_data)
+                group_names.append(group_name)
+        
+        if len(groups) < 2:
+            st.warning("Need at least 2 groups for ANOVA")
+            return
+        
+        # Perform ANOVA
+        f_stat, p_value = stats.f_oneway(*groups)
+        
+        st.markdown("**Results:**")
+        st.metric("F-statistic", f"{f_stat:.4f}")
+        st.metric("p-value", f"{p_value:.4f}")
+        
+        # Group statistics
+        group_stats = []
+        for i, group_name in enumerate(group_names):
+            group_stats.append({
+                'Group': group_name,
+                'Mean': groups[i].mean(),
+                'Std': groups[i].std(),
+                'Count': len(groups[i])
+            })
+        
+        group_stats_df = pd.DataFrame(group_stats)
+        st.dataframe(group_stats_df, use_container_width=True)
+        
+        # Interpretation
+        alpha = 1 - analytics_options['confidence_level']
+        if p_value < alpha:
+            st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Groups have significantly different means")
+        else:
+            st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - No significant difference between groups")
+    
+    except Exception as e:
+        logger.error(f"Error in ANOVA analysis: {e}")
+        st.error("Failed to perform ANOVA analysis")
+
+
+def render_chi_square_analysis(test_data, analytics_options):
+    """Render chi-square analysis"""
+    try:
+        st.markdown("#### 📊 Chi-Square Analysis")
+        
+        # Select dataset
+        available_datasets = list(test_data.keys())
+        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="chi_dataset")
+        
+        data = test_data[selected_dataset]
+        categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+        
+        if len(categorical_cols) < 2:
+            st.warning("Need at least 2 categorical columns for chi-square test")
+            return
+        
+        # Select variables
+        var1 = st.selectbox("Select Variable 1", categorical_cols, key="chi_var1")
+        var2 = st.selectbox("Select Variable 2", [col for col in categorical_cols if col != var1], key="chi_var2")
+        
+        # Create contingency table
+        contingency_table = pd.crosstab(data[var1], data[var2])
+        
+        # Perform chi-square test
+        chi2_stat, p_value, dof, expected = stats.chi2_contingency(contingency_table)
+        
+        st.markdown("**Contingency Table:**")
+        st.dataframe(contingency_table, use_container_width=True)
+        
+        st.markdown("**Results:**")
+        st.metric("Chi-square statistic", f"{chi2_stat:.4f}")
+        st.metric("p-value", f"{p_value:.4f}")
+        st.metric("Degrees of freedom", dof)
+        
+        # Interpretation
+        alpha = 1 - analytics_options['confidence_level']
+        if p_value < alpha:
+            st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Variables are associated")
+        else:
+            st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - No significant association")
+    
+    except Exception as e:
+        logger.error(f"Error in chi-square analysis: {e}")
+        st.error("Failed to perform chi-square analysis")
+
+
+def render_ks_test_analysis(test_data, analytics_options):
+    """Render Kolmogorov-Smirnov test analysis"""
+    try:
+        st.markdown("#### 📊 Kolmogorov-Smirnov Test")
+        
+        # Select dataset
+        available_datasets = list(test_data.keys())
+        selected_dataset = st.selectbox("Select Dataset", available_datasets, key="ks_dataset")
+        
+        data = test_data[selected_dataset]
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) < 1:
+            st.warning("No numeric columns available for KS test")
+            return
+        
+        # Select variable
+        test_variable = st.selectbox("Select Variable", numeric_cols, key="ks_variable")
+        
+        # Test type
+        test_type = st.selectbox("Test Type", ["Normality", "Two-sample"], key="ks_type")
+        
+        sample_data = data[test_variable].dropna()
+        
+        if test_type == "Normality":
+            # Test for normality
+            ks_stat, p_value = stats.kstest(sample_data, 'norm', args=(sample_data.mean(), sample_data.std()))
+            
+            st.markdown("**Results:**")
+            st.metric("KS statistic", f"{ks_stat:.4f}")
+            st.metric("p-value", f"{p_value:.4f}")
+            
+            # Interpretation
+            alpha = 1 - analytics_options['confidence_level']
+            if p_value < alpha:
+                st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Data is not normally distributed")
+            else:
+                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - Data may be normally distributed")
+        
+        elif test_type == "Two-sample":
+            # Two-sample KS test
+            categorical_cols = data.select_dtypes(include=['object']).columns.tolist()
+            if not categorical_cols:
+                st.warning("No categorical columns available for grouping")
+                return
+            
+            group_col = st.selectbox("Select Grouping Variable", categorical_cols, key="ks_group")
+            
+            # Get unique groups
+            groups = data[group_col].unique()
+            if len(groups) < 2:
+                st.warning("Need at least 2 groups for two-sample KS test")
+                return
+            
+            # Select two groups
+            group1 = st.selectbox("Group 1", groups, key="ks_group1")
+            group2 = st.selectbox("Group 2", [g for g in groups if g != group1], key="ks_group2")
+            
+            # Perform KS test
+            sample1 = data[data[group_col] == group1][test_variable].dropna()
+            sample2 = data[data[group_col] == group2][test_variable].dropna()
+            
+            ks_stat, p_value = stats.ks_2samp(sample1, sample2)
+            
+            st.markdown("**Results:**")
+            st.metric("KS statistic", f"{ks_stat:.4f}")
+            st.metric("p-value", f"{p_value:.4f}")
+            
+            # Interpretation
+            alpha = 1 - analytics_options['confidence_level']
+            if p_value < alpha:
+                st.success(f"Reject null hypothesis (p < {alpha:.3f}) - Samples come from different distributions")
+            else:
+                st.info(f"Fail to reject null hypothesis (p ≥ {alpha:.3f}) - Samples may come from same distribution")
+    
+    except Exception as e:
+        logger.error(f"Error in KS test analysis: {e}")
+        st.error("Failed to perform KS test analysis")
