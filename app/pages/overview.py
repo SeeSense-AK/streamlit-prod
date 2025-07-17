@@ -1,6 +1,5 @@
 """
 Updated Overview Page for SeeSense Dashboard
-Now uses real data-driven calculations instead of hardcoded placeholders
 """
 import streamlit as st
 import pandas as pd
@@ -16,7 +15,7 @@ import logging
 from app.core.data_processor import data_processor
 from app.utils.config import config
 
-# Import our new calculators
+# Import our new data-driven calculators
 from app.core.metrics_calculator import metrics_calculator
 from app.core.groq_insights_generator import create_insights_generator
 
@@ -56,34 +55,9 @@ def render_overview_page():
             logger.warning(f"Error applying filters: {e}")
             # Continue with unfiltered data
         
-        # Calculate real metrics using our new calculator
-        real_metrics = metrics_calculator.calculate_all_overview_metrics(
-            routes_df, braking_df, swerving_df, time_series_df
-        )
-        
-        # Calculate priority scores
-        priority_data = metrics_calculator.calculate_priority_scores(
-            braking_df, swerving_df, routes_df
-        )
-        
-        # Initialize Groq insights generator
-        insights_generator = create_insights_generator()
-        
-        # Generate AI-powered insights
-        insights = insights_generator.generate_comprehensive_insights(
-            real_metrics, routes_df, priority_data, time_series_df
-        )
-        
-        # Generate executive summary
-        executive_summary = insights_generator.generate_executive_summary(
-            insights, real_metrics
-        )
-        
         # Render main overview sections
-        render_executive_summary(executive_summary)
-        render_key_metrics_enhanced(real_metrics)
-        render_ai_insights(insights)
-        render_priority_hotspots(priority_data)
+        render_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
+        render_ai_insights_section(routes_df, braking_df, swerving_df, time_series_df)
         render_safety_maps(braking_df, swerving_df, routes_df)
         render_trends_analysis(time_series_df)
         render_recent_alerts(braking_df, swerving_df)
@@ -99,292 +73,21 @@ def render_overview_page():
             st.button("🔄 Retry", key="overview_retry")
 
 
-def render_executive_summary(summary: str):
-    """Render AI-generated executive summary"""
-    st.markdown("### 🎯 Executive Summary")
+def render_no_data_message():
+    """Render message when no data is available"""
+    st.warning("⚠️ No data available for the overview dashboard.")
+    st.markdown("""
+    To use the overview dashboard, you need to:
+    1. **Add your data files** to the `data/raw/` directory
+    2. **Go to the Data Setup page** to validate your files
+    3. **Refresh this page** after adding your data
     
-    # Create an attractive summary card
-    st.markdown(f"""
-    <div style="
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px;
-        border-radius: 12px;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    ">
-        <h4 style="margin: 0 0 12px 0; color: white;">🚴‍♂️ Network Performance Overview</h4>
-        <div style="font-size: 16px; line-height: 1.6; white-space: pre-line;">
-            {summary}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_key_metrics_enhanced(metrics: Dict[str, Any]):
-    """Render key performance metrics with real data-driven deltas"""
-    st.markdown("### 📈 Key Safety Metrics")
-    
-    # Display metrics in columns with real deltas
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(
-            label="Total Routes Analyzed",
-            value=f"{metrics['total_routes']:,}",
-            delta=metrics.get('routes_delta', 'N/A')
-        )
-    
-    with col2:
-        st.metric(
-            label="Active Hotspots",
-            value=f"{metrics['total_hotspots']:,}",
-            delta=metrics.get('hotspots_delta', 'N/A')
-        )
-    
-    with col3:
-        st.metric(
-            label="Safety Score",
-            value=f"{metrics['safety_score']:.1f}/10",
-            delta=metrics.get('safety_delta', 'N/A')
-        )
-    
-    with col4:
-        st.metric(
-            label="Incident Rate",
-            value=f"{metrics['incident_rate']:.1f}/1000",
-            delta=metrics.get('incident_delta', 'N/A'),
-            help="Incidents per 1000 rides"
-        )
-    
-    # Additional metrics row
-    col5, col6, col7, col8 = st.columns(4)
-    
-    with col5:
-        st.metric(
-            label="Total Cyclists",
-            value=f"{metrics['total_cyclists']:,}",
-            delta=metrics.get('cyclists_delta', 'N/A')
-        )
-    
-    with col6:
-        st.metric(
-            label="Avg Daily Rides",
-            value=f"{metrics['avg_daily_rides']:,}",
-            delta=metrics.get('rides_delta', 'N/A')
-        )
-    
-    with col7:
-        st.metric(
-            label="High-Risk Areas",
-            value=f"{metrics['high_risk_areas']:,}",
-            delta=metrics.get('risk_delta', 'N/A')
-        )
-    
-    with col8:
-        st.metric(
-            label="Infrastructure Coverage",
-            value=f"{metrics['infrastructure_coverage']:.1f}%",
-            delta=metrics.get('infrastructure_delta', 'N/A')
-        )
-
-
-def render_ai_insights(insights: list):
-    """Render AI-generated insights with enhanced formatting"""
-    st.markdown("### 🧠 AI-Powered Insights")
-    
-    if not insights:
-        st.info("No insights available. Please check your data.")
-        return
-    
-    # Create tabs for different insight categories
-    insight_categories = {}
-    for insight in insights:
-        category = insight.category
-        if category not in insight_categories:
-            insight_categories[category] = []
-        insight_categories[category].append(insight)
-    
-    # Create tabs
-    tab_names = list(insight_categories.keys())
-    tabs = st.tabs([f"🔍 {name}" for name in tab_names])
-    
-    for tab, category in zip(tabs, tab_names):
-        with tab:
-            category_insights = insight_categories[category]
-            
-            for insight in category_insights:
-                # Impact level color coding
-                impact_colors = {
-                    'High': '#dc3545',
-                    'Medium': '#ffc107',
-                    'Low': '#28a745'
-                }
-                
-                impact_color = impact_colors.get(insight.impact_level, '#6c757d')
-                
-                # Create insight card
-                st.markdown(f"""
-                <div style="
-                    border-left: 4px solid {impact_color};
-                    padding: 16px;
-                    margin: 16px 0;
-                    background-color: #f8f9fa;
-                    border-radius: 0 8px 8px 0;
-                ">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                        <h4 style="margin: 0; color: #333;">{insight.title}</h4>
-                        <span style="
-                            background-color: {impact_color};
-                            color: white;
-                            padding: 2px 8px;
-                            border-radius: 12px;
-                            font-size: 12px;
-                            font-weight: bold;
-                        ">{insight.impact_level} Impact</span>
-                    </div>
-                    <p style="margin: 8px 0; color: #555; line-height: 1.5;">{insight.description}</p>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                # Show data points and recommendations
-                col1, col2 = st.columns([1, 1])
-                
-                with col1:
-                    if insight.data_points:
-                        st.markdown("**📊 Key Data Points:**")
-                        for point in insight.data_points:
-                            st.markdown(f"• {point}")
-                
-                with col2:
-                    if insight.recommendations:
-                        st.markdown("**💡 Recommendations:**")
-                        for rec in insight.recommendations:
-                            st.markdown(f"• {rec}")
-                
-                # Confidence score
-                st.markdown(f"*Confidence Score: {insight.confidence_score:.0%}*")
-                st.markdown("---")
-
-
-def render_priority_hotspots(priority_data: Dict[str, Any]):
-    """Render priority hotspots with data-driven scoring"""
-    st.markdown("### 🎯 Priority Hotspots & Routes")
-    
-    # Summary metrics
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("High Priority", priority_data['high_priority_count'])
-    
-    with col2:
-        st.metric("Medium Priority", priority_data['medium_priority_count'])
-    
-    with col3:
-        st.metric("Low Priority", priority_data['low_priority_count'])
-    
-    # Create tabs for different priority types
-    hotspot_tab, route_tab = st.tabs(["🚨 Hotspot Priorities", "🛣️ Route Priorities"])
-    
-    with hotspot_tab:
-        if priority_data['hotspot_priorities']:
-            # Sort by priority score
-            sorted_hotspots = sorted(
-                priority_data['hotspot_priorities'],
-                key=lambda x: x['priority_score'],
-                reverse=True
-            )
-            
-            # Display top 10 hotspots
-            st.markdown("**Top Priority Hotspots**")
-            
-            for i, hotspot in enumerate(sorted_hotspots[:10]):
-                priority_colors = {
-                    'High': '#dc3545',
-                    'Medium': '#ffc107',
-                    'Low': '#28a745'
-                }
-                
-                color = priority_colors.get(hotspot['priority_level'], '#6c757d')
-                
-                st.markdown(f"""
-                <div style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 12px;
-                    margin: 8px 0;
-                    background-color: white;
-                    border-radius: 8px;
-                    border-left: 4px solid {color};
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                ">
-                    <div>
-                        <strong>#{i+1}: {hotspot['type'].title()} Hotspot</strong><br>
-                        <small>{hotspot['description']}</small>
-                    </div>
-                    <div style="text-align: right;">
-                        <div style="font-size: 18px; font-weight: bold; color: {color};">
-                            {hotspot['priority_score']:.1f}
-                        </div>
-                        <div style="font-size: 12px; color: #666;">
-                            {hotspot['priority_level']} Priority
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No hotspot priority data available")
-    
-    with route_tab:
-        if priority_data['route_priorities']:
-            # Sort by priority score
-            sorted_routes = sorted(
-                priority_data['route_priorities'],
-                key=lambda x: x['priority_score'],
-                reverse=True
-            )
-            
-            # Display top 10 routes
-            st.markdown("**Top Priority Routes**")
-            
-            for i, route in enumerate(sorted_routes[:10]):
-                priority_colors = {
-                    'High': '#dc3545',
-                    'Medium': '#ffc107',
-                    'Low': '#28a745'
-                }
-                
-                color = priority_colors.get(route['priority_level'], '#6c757d')
-                
-                st.markdown(f"""
-                <div style="
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    padding: 12px;
-                    margin: 8px 0;
-                    background-color: white;
-                    border-radius: 8px;
-                    border-left: 4px solid {color};
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-                ">
-                    <div>
-                        <strong>#{i+1}: Route {route['id']}</strong><br>
-                        <small>{route['description']}</small>
-                    </div>
-                    <div style="text-align: right;">
-                        <div style="font-size: 18px; font-weight: bold; color: {color};">
-                            {route['priority_score']:.1f}
-                        </div>
-                        <div style="font-size: 12px; color: #666;">
-                            {route['priority_level']} Priority
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-        else:
-            st.info("No route priority data available")
+    Required files:
+    - `routes.csv` - Route data with popularity metrics
+    - `braking_hotspots.csv` - Sudden braking incident locations
+    - `swerving_hotspots.csv` - Swerving incident locations
+    - `time_series.csv` - Daily aggregated cycling data
+    """)
 
 
 def render_overview_filters(routes_df, time_series_df):
@@ -476,21 +179,202 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
     return routes_df, braking_df, swerving_df, time_series_df
 
 
-def render_no_data_message():
-    """Render message when no data is available"""
-    st.warning("⚠️ No data available for the overview dashboard.")
-    st.markdown("""
-    To use the overview dashboard, you need to:
-    1. **Add your data files** to the `data/raw/` directory
-    2. **Go to the Data Setup page** to validate your files
-    3. **Refresh this page** after adding your data
+def render_key_metrics(routes_df, braking_df, swerving_df, time_series_df):
+    """Render key performance metrics with real data-driven calculations"""
+    st.markdown("### 📈 Key Safety Metrics")
     
-    Required files:
-    - `routes.csv` - Route data with popularity metrics
-    - `braking_hotspots.csv` - Sudden braking incident locations
-    - `swerving_hotspots.csv` - Swerving incident locations
-    - `time_series.csv` - Daily aggregated cycling data
-    """)
+    # Calculate metrics using our new data-driven calculator
+    metrics = calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
+    
+    # Display metrics in columns
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric(
+            label="Total Routes Analyzed",
+            value=f"{metrics['total_routes']:,}",
+            delta=metrics.get('routes_delta', 'N/A')
+        )
+    
+    with col2:
+        st.metric(
+            label="Active Hotspots",
+            value=f"{metrics['total_hotspots']:,}",
+            delta=metrics.get('hotspots_delta', 'N/A')
+        )
+    
+    with col3:
+        st.metric(
+            label="Safety Score",
+            value=f"{metrics['safety_score']:.1f}/10",
+            delta=metrics.get('safety_delta', 'N/A')
+        )
+    
+    with col4:
+        st.metric(
+            label="Incident Rate",
+            value=f"{metrics['incident_rate']:.1f}/1000",
+            delta=metrics.get('incident_delta', 'N/A'),
+            help="Incidents per 1000 rides"
+        )
+    
+    # Additional metrics row
+    col5, col6, col7, col8 = st.columns(4)
+    
+    with col5:
+        st.metric(
+            label="Total Cyclists",
+            value=f"{metrics['total_cyclists']:,}",
+            delta=metrics.get('cyclists_delta', 'N/A')
+        )
+    
+    with col6:
+        st.metric(
+            label="Avg Daily Rides",
+            value=f"{metrics['avg_daily_rides']:,}",
+            delta=metrics.get('rides_delta', 'N/A')
+        )
+    
+    with col7:
+        st.metric(
+            label="High-Risk Areas",
+            value=f"{metrics['high_risk_areas']:,}",
+            delta=metrics.get('risk_delta', 'N/A')
+        )
+    
+    with col8:
+        st.metric(
+            label="Infrastructure Coverage",
+            value=f"{metrics['infrastructure_coverage']:.1f}%",
+            delta=metrics.get('infrastructure_delta', 'N/A')
+        )
+
+
+def calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df):
+    """Calculate all key metrics using real data-driven calculations"""
+    return metrics_calculator.calculate_all_overview_metrics(
+        routes_df, braking_df, swerving_df, time_series_df
+    )
+
+
+def render_ai_insights_section(routes_df, braking_df, swerving_df, time_series_df):
+    """Render AI-powered insights section"""
+    st.markdown("### 🧠 AI-Powered Insights")
+    
+    try:
+        # Calculate metrics
+        metrics = calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
+        
+        # Generate insights
+        insights_generator = create_insights_generator()
+        insights = insights_generator.generate_comprehensive_insights(
+            metrics, routes_df, None, time_series_df
+        )
+        
+        # Generate executive summary
+        executive_summary = insights_generator.generate_executive_summary(
+            insights, metrics
+        )
+        
+        # Display executive summary
+        st.markdown("#### 🎯 Executive Summary")
+        st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        ">
+            <div style="font-size: 16px; line-height: 1.6; white-space: pre-line;">
+                {executive_summary}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Display insights
+        if insights:
+            st.markdown("#### 🔍 Key Insights")
+            
+            # Create tabs for different insight categories
+            insight_categories = {}
+            for insight in insights:
+                category = insight.category
+                if category not in insight_categories:
+                    insight_categories[category] = []
+                insight_categories[category].append(insight)
+            
+            # Create tabs
+            tab_names = list(insight_categories.keys())
+            if tab_names:
+                tabs = st.tabs([f"🔍 {name}" for name in tab_names])
+                
+                for tab, category in zip(tabs, tab_names):
+                    with tab:
+                        category_insights = insight_categories[category]
+                        
+                        for insight in category_insights:
+                            # Impact level color coding
+                            impact_colors = {
+                                'High': '#dc3545',
+                                'Medium': '#ffc107',
+                                'Low': '#28a745'
+                            }
+                            
+                            impact_color = impact_colors.get(insight.impact_level, '#6c757d')
+                            
+                            # Create insight card
+                            st.markdown(f"""
+                            <div style="
+                                border-left: 4px solid {impact_color};
+                                padding: 16px;
+                                margin: 16px 0;
+                                background-color: #f8f9fa;
+                                border-radius: 0 8px 8px 0;
+                            ">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                    <h4 style="margin: 0; color: #333;">{insight.title}</h4>
+                                    <span style="
+                                        background-color: {impact_color};
+                                        color: white;
+                                        padding: 2px 8px;
+                                        border-radius: 12px;
+                                        font-size: 12px;
+                                        font-weight: bold;
+                                    ">{insight.impact_level} Impact</span>
+                                </div>
+                                <p style="margin: 8px 0; color: #555; line-height: 1.5;">{insight.description}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # Show data points and recommendations
+                            col1, col2 = st.columns([1, 1])
+                            
+                            with col1:
+                                if insight.data_points:
+                                    st.markdown("**📊 Key Data Points:**")
+                                    for point in insight.data_points:
+                                        st.markdown(f"• {point}")
+                            
+                            with col2:
+                                if insight.recommendations:
+                                    st.markdown("**💡 Recommendations:**")
+                                    for rec in insight.recommendations:
+                                        st.markdown(f"• {rec}")
+                            
+                            # Confidence score
+                            st.markdown(f"*Confidence Score: {insight.confidence_score:.0%}*")
+                            st.markdown("---")
+            else:
+                st.info("No insights available for current data filters.")
+        else:
+            st.info("No insights available. Please check your data quality.")
+            
+    except Exception as e:
+        logger.error(f"Error generating AI insights: {e}")
+        st.error("⚠️ Error generating AI insights. Please try again.")
+        st.info("AI insights are temporarily unavailable. The dashboard will continue to work with basic metrics.")
 
 
 def render_safety_maps(braking_df, swerving_df, routes_df):
