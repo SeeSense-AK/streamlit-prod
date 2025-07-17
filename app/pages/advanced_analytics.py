@@ -767,7 +767,7 @@ def render_ks_test_analysis(test_data, analytics_options):
     
     except Exception as e:
         logger.error(f"Error in KS test analysis: {e}")
-        st.error("Failed to perform KS test analysis") e:
+        st.error("Failed to perform KS test analysis: {e}")
         logger.error(f"Error in advanced analytics page: {e}")
         st.error("⚠️ An error occurred while loading advanced analytics.")
         st.info("Please check your data files and try refreshing the page.")
