@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
-# Groq client (install with: pip install groq)
 try:
     from groq import Groq
     GROQ_AVAILABLE = True
@@ -41,10 +40,16 @@ class GroqInsightsGenerator:
         """
         Initialize the Groq insights generator
         """
-        self.api_key = api_key or os.getenv('GROQ_API_KEY')
+        # Try Streamlit secrets first, then environment variables
+        try:
+            import streamlit as st
+            self.api_key = api_key or st.secrets.get("GROQ_API_KEY") or os.getenv('GROQ_API_KEY')
+        except:
+            self.api_key = api_key or os.getenv('GROQ_API_KEY')
+    
         self.client = None
         self.logger = logging.getLogger(__name__)
-        
+    
         if GROQ_AVAILABLE and self.api_key:
             try:
                 self.client = Groq(api_key=self.api_key)
