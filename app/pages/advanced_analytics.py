@@ -747,6 +747,11 @@ def find_significant_correlations(data, min_correlation, method):
         return pd.DataFrame()
 
 
+    except Exception as e:
+        logger.error(f"Error creating forecast chart: {e}")
+        return None, None
+
+
 def create_forecast_chart(data, column, periods):
     """Create forecast chart using simple exponential smoothing"""
     try:
