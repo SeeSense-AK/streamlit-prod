@@ -11,8 +11,9 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, Tuple, List
 import logging
-import json
 import os
+import json
+from pathlib import Path
 
 # AI and API imports
 try:
@@ -39,6 +40,11 @@ def render_actionable_insights_page():
     
     # Check for API key
     api_key = get_groq_api_key()
+    
+    # Check for temporary session key as fallback
+    if not api_key and hasattr(st.session_state, 'temp_groq_key'):
+        api_key = st.session_state.temp_groq_key
+    
     if not api_key:
         render_api_key_setup()
         return
@@ -95,22 +101,59 @@ def render_actionable_insights_page():
 def get_groq_api_key():
     """Get Groq API key from configuration or environment"""
     try:
-        # Try to get from config first
-        api_key = config.get('groq.api_key')
-        if api_key:
-            return api_key
-        
-        # Fall back to environment variable
+        # Method 1: Check environment variable first
         api_key = os.getenv('GROQ_API_KEY')
         if api_key:
-            return api_key
+            logger.info("Found Groq API key in environment variable")
+            return api_key.strip()
         
-        # Check if there's a secrets file
-        secrets_path = config.get_project_root() / "secrets" / "groq_api_key.txt"
+        # Method 2: Check config file
+        try:
+            api_key = config.get('groq.api_key')
+            if api_key:
+                logger.info("Found Groq API key in config file")
+                return api_key.strip()
+        except Exception as e:
+            logger.debug(f"Could not get API key from config: {e}")
+        
+        # Method 3: Check secrets file in project root
+        project_root = Path(__file__).parent.parent.parent  # Go up from pages/ to project root
+        secrets_path = project_root / "secrets" / "groq_api_key.txt"
+        
+        logger.info(f"Looking for secrets file at: {secrets_path}")
+        logger.info(f"Secrets file exists: {secrets_path.exists()}")
+        
         if secrets_path.exists():
-            with open(secrets_path, 'r') as f:
-                return f.read().strip()
+            try:
+                with open(secrets_path, 'r') as f:
+                    api_key = f.read().strip()
+                if api_key:
+                    logger.info("Found Groq API key in secrets file")
+                    return api_key
+                else:
+                    logger.warning("Secrets file exists but is empty")
+            except Exception as e:
+                logger.error(f"Error reading secrets file: {e}")
         
+        # Method 4: Check alternative secrets locations
+        alternative_paths = [
+            Path.cwd() / "secrets" / "groq_api_key.txt",  # Current working directory
+            Path.home() / ".seesense" / "groq_api_key.txt",  # User home directory
+        ]
+        
+        for alt_path in alternative_paths:
+            logger.info(f"Checking alternative path: {alt_path}")
+            if alt_path.exists():
+                try:
+                    with open(alt_path, 'r') as f:
+                        api_key = f.read().strip()
+                    if api_key:
+                        logger.info(f"Found Groq API key in alternative location: {alt_path}")
+                        return api_key
+                except Exception as e:
+                    logger.error(f"Error reading alternative secrets file {alt_path}: {e}")
+        
+        logger.warning("No Groq API key found in any location")
         return None
     
     except Exception as e:
@@ -123,31 +166,81 @@ def render_api_key_setup():
     st.warning("⚠️ Groq API key not found")
     
     st.markdown("""
-    To use AI-powered insights, you need to configure your Groq API key. You can do this in several ways:
+    To use AI-powered insights, you need to configure your Groq API key.
+    """)
     
-    ### Option 1: Environment Variable (Recommended)
-    Set the environment variable `GROQ_API_KEY`:
+    # Debug information
+    with st.expander("🔍 Debug Information"):
+        project_root = Path(__file__).parent.parent.parent
+        secrets_path = project_root / "secrets" / "groq_api_key.txt"
+        cwd_path = Path.cwd() / "secrets" / "groq_api_key.txt"
+        
+        st.markdown("**Checking these locations:**")
+        st.code(f"1. Environment variable: GROQ_API_KEY = {'SET' if os.getenv('GROQ_API_KEY') else 'NOT SET'}")
+        st.code(f"2. Project root path: {secrets_path}")
+        st.code(f"   - Exists: {secrets_path.exists()}")
+        st.code(f"3. Current working directory: {cwd_path}")
+        st.code(f"   - Exists: {cwd_path.exists()}")
+        st.code(f"4. Current working directory: {Path.cwd()}")
+        
+        if secrets_path.exists():
+            try:
+                with open(secrets_path, 'r') as f:
+                    content = f.read()
+                st.code(f"   - File size: {len(content)} characters")
+                st.code(f"   - Content preview: {content[:20]}..." if len(content) > 20 else f"   - Content: {content}")
+            except Exception as e:
+                st.code(f"   - Error reading file: {e}")
+    
+    st.markdown("""
+    ### 🔧 Setup Instructions:
+    
+    #### Option 1: Secrets File (Recommended)
+    1. Create the file: `secrets/groq_api_key.txt` in your project root
+    2. Add your API key to the file (no extra spaces or newlines)
+    3. Make sure the file has proper permissions: `chmod 600 secrets/groq_api_key.txt`
+    
+    #### Option 2: Environment Variable
     ```bash
     export GROQ_API_KEY="your-api-key-here"
     ```
     
-    ### Option 2: Secrets File
-    Create a file at `secrets/groq_api_key.txt` in your project root and paste your API key there.
-    
-    ### Option 3: Configuration File
+    #### Option 3: Configuration File
     Add to your `config/settings.yaml`:
     ```yaml
     groq:
       api_key: "your-api-key-here"
     ```
     
-    ### Getting a Groq API Key
-    1. Visit [console.groq.com](https://console.groq.com)
-    2. Sign up or log in
-    3. Navigate to API Keys section
-    4. Create a new API key
-    5. Copy and configure it using one of the methods above
+    ### 📋 Step-by-Step:
+    
+    1. **Get your API key** from [console.groq.com](https://console.groq.com)
+    2. **Create the secrets directory** in your project root:
+       ```bash
+       mkdir -p secrets
+       ```
+    3. **Create the API key file**:
+       ```bash
+       echo "your-api-key-here" > secrets/groq_api_key.txt
+       ```
+    4. **Set permissions**:
+       ```bash
+       chmod 600 secrets/groq_api_key.txt
+       ```
+    5. **Refresh this page**
     """)
+    
+    # Manual API key input (temporary)
+    st.markdown("### 🔑 Temporary API Key (Session Only)")
+    st.warning("⚠️ This is for testing only. Your key will be lost when you refresh.")
+    
+    temp_key = st.text_input("Enter your Groq API key:", type="password", key="temp_groq_key")
+    
+    if temp_key:
+        st.session_state.temp_groq_key = temp_key
+        st.success("✅ Temporary API key set! You can now use AI features.")
+        if st.button("🔄 Refresh Page"):
+            st.experimental_rerun()
     
     # Check if user has set up the key
     if st.button("🔄 Check API Key Again"):
