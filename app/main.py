@@ -248,6 +248,30 @@ def main():
             else:
                 render_ml_insights_page()
         
+        # ADD THIS NEW SECTION FOR SPATIAL ANALYSIS
+        elif selected_page == "spatial_analysis":
+            # Check if data is available
+            data_status = data_processor.get_data_status()
+            if data_status['available_datasets'] == 0:
+                render_data_not_available_message()
+            else:
+                render_spatial_analysis_page()
+        
+        # ADD ROUTING FOR FUTURE PAGES
+        elif selected_page == "advanced_analytics":
+            st.info("🚧 Advanced Analytics page is under development")
+            st.markdown("This page will include:")
+            st.markdown("- Time series analysis")
+            st.markdown("- Advanced statistical modeling")
+            st.markdown("- Anomaly detection")
+            
+        elif selected_page == "actionable_insights":
+            st.info("🚧 Actionable Insights page is under development")
+            st.markdown("This page will include:")
+            st.markdown("- AI-generated recommendations")
+            st.markdown("- Priority action items")
+            st.markdown("- Risk assessment summaries")
+        
         else:
             # Default to data setup if no valid page
             render_data_setup_page()
