@@ -37,9 +37,6 @@ logger = logging.getLogger(__name__)
 
 def render_spatial_analysis_page():
     """Render the spatial analysis page"""
-    # Debug output to check if this function is being called
-    st.write("🔍 DEBUG: Spatial Analysis page function called!")
-    
     st.title("🗺️ Spatial Analysis")
     st.markdown("Advanced geospatial analysis of cycling safety patterns")
     
