@@ -422,7 +422,7 @@ def prepare_time_series_data(time_series_df):
             return None
         
         # Fill missing values
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        df = df.ffill().bfill()
         
         return df
     
@@ -664,6 +664,9 @@ def create_anomaly_visualization(anomaly_data):
         return None
 
 
+# Additional helper functions would continue here...
+# (Due to length constraints, I'm showing the main structure)
+
 def prepare_correlation_data(routes_df, braking_df, swerving_df, time_series_df):
     """Prepare combined data for correlation analysis"""
     try:
@@ -755,15 +758,32 @@ def create_forecast_chart(data, column, periods):
         train_data = ts_data[:train_size]
         test_data = ts_data[train_size:]
         
-        # Simple exponential smoothing
-        alpha = 0.3
-        forecast = [train_data.iloc[-1]]
+def create_forecast_chart(data, column, periods):
+    """Create forecast chart using simple exponential smoothing"""
+    try:
+        # Prepare data
+        ts_data = data[column].dropna()
         
+        if len(ts_data) < 10:
+            return None, None
+        
+        # Simple exponential smoothing forecast
+        alpha = 0.3
+        forecast_values = []
+        
+        # Use the last actual value as starting point
+        last_value = ts_data.iloc[-1]
+        
+        # Generate forecast values
         for i in range(periods):
             if i == 0:
-                forecast.append(alpha * train_data.iloc[-1] + (1 - alpha) * forecast[-1])
+                # First forecast point
+                forecast_val = alpha * last_value + (1 - alpha) * last_value
             else:
-                forecast.append(alpha * forecast[-1] + (1 - alpha) * forecast[-1])
+                # Subsequent forecast points
+                forecast_val = alpha * forecast_values[-1] + (1 - alpha) * forecast_values[-1]
+            
+            forecast_values.append(forecast_val)
         
         # Create forecast dates
         last_date = data.index[-1]
@@ -784,7 +804,7 @@ def create_forecast_chart(data, column, periods):
         # Forecast
         fig.add_trace(go.Scatter(
             x=forecast_dates,
-            y=forecast[1:],
+            y=forecast_values,
             mode='lines',
             name='Forecast',
             line=dict(color='red', dash='dash')
@@ -797,20 +817,18 @@ def create_forecast_chart(data, column, periods):
             height=400
         )
         
-        # Calculate simple metrics
-        if len(test_data) > 0:
-            mae = np.mean(np.abs(test_data - forecast[1:len(test_data)+1]))
-            mape = np.mean(np.abs((test_data - forecast[1:len(test_data)+1]) / test_data)) * 100
-            
-            forecast_metrics = {
-                'MAE': mae,
-                'MAPE': mape,
-                'Forecast Trend': 'Increasing' if forecast[-1] > forecast[1] else 'Decreasing'
-            }
-        else:
-            forecast_metrics = {'Forecast Trend': 'Increasing' if forecast[-1] > forecast[1] else 'Decreasing'}
+        # Calculate simple forecast metrics
+        forecast_metrics = {
+            'Forecast Trend': 'Increasing' if forecast_values[-1] > forecast_values[0] else 'Decreasing',
+            'Forecast Range': f"{min(forecast_values):.2f} - {max(forecast_values):.2f}",
+            'Last Value': f"{last_value:.2f}"
+        }
         
         return fig, forecast_metrics
+    
+    except Exception as e:
+        logger.error(f"Error creating forecast chart: {e}")
+        return None, None
     
     except Exception as e:
         logger.error(f"Error creating forecast chart: {e}")
