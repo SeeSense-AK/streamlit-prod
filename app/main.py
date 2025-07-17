@@ -24,10 +24,10 @@ from app.pages.data_setup import render_data_setup_page
 from app.pages.overview import render_overview_page
 from app.pages.ml_insights import render_ml_insights_page
 from app.pages.spatial_analysis import render_spatial_analysis_page
+from app.pages.advanced_analytics import render_advanced_analytics_page
 from app.pages.data_setup import render_data_setup_page
 
 # Future page imports (we'll add these as we build them)
-# from app.pages.advanced_analytics import render_advanced_analytics_page
 # from app.pages.actionable_insights import render_actionable_insights_page
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,11 @@ def load_custom_css():
             color: #333;
             font-size: 24px;
             font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .card-delta {
+            color: #666;
+            font-size: 12px;
         }
         .section-title {
             font-size: 20px;
@@ -248,7 +253,6 @@ def main():
             else:
                 render_ml_insights_page()
         
-        # ADD THIS NEW SECTION FOR SPATIAL ANALYSIS
         elif selected_page == "spatial_analysis":
             # Check if data is available
             data_status = data_processor.get_data_status()
@@ -257,20 +261,21 @@ def main():
             else:
                 render_spatial_analysis_page()
         
-        # ADD ROUTING FOR FUTURE PAGES
         elif selected_page == "advanced_analytics":
-            st.info("🚧 Advanced Analytics page is under development")
-            st.markdown("This page will include:")
-            st.markdown("- Time series analysis")
-            st.markdown("- Advanced statistical modeling")
-            st.markdown("- Anomaly detection")
-            
+            # Check if data is available
+            data_status = data_processor.get_data_status()
+            if data_status['available_datasets'] == 0:
+                render_data_not_available_message()
+            else:
+                render_advanced_analytics_page()
+        
         elif selected_page == "actionable_insights":
             st.info("🚧 Actionable Insights page is under development")
             st.markdown("This page will include:")
             st.markdown("- AI-generated recommendations")
             st.markdown("- Priority action items")
             st.markdown("- Risk assessment summaries")
+            st.markdown("- Safety improvement ROI calculations")
         
         else:
             # Default to data setup if no valid page
