@@ -478,17 +478,18 @@ def create_moving_averages_chart(data, column):
             line=dict(color='lightblue', width=1)
         ))
         
-        # 7-day moving average
-        ma_7 = data[column].rolling(window=7, center=True).mean()
-        fig.add_trace(go.Scatter(
-            x=data.index,
-            y=ma_7,
-            mode='lines',
-            name='7-day MA',
-            line=dict(color='blue', width=2)
-        ))
+        # 7-day moving average (only if we have enough data)
+        if len(data) >= 7:
+            ma_7 = data[column].rolling(window=7, center=True).mean()
+            fig.add_trace(go.Scatter(
+                x=data.index,
+                y=ma_7,
+                mode='lines',
+                name='7-day MA',
+                line=dict(color='blue', width=2)
+            ))
         
-        # 30-day moving average
+        # 30-day moving average (only if we have enough data)
         if len(data) >= 30:
             ma_30 = data[column].rolling(window=30, center=True).mean()
             fig.add_trace(go.Scatter(
@@ -519,20 +520,26 @@ def create_temporal_patterns_chart(data, column):
         # Day of week pattern
         data_reset = data.reset_index()
         data_reset['day_of_week'] = data_reset['date'].dt.day_name()
-        data_reset['hour'] = data_reset['date'].dt.hour
         
         # Day of week aggregation
         dow_pattern = data_reset.groupby('day_of_week')[column].mean().reset_index()
         
+        if dow_pattern.empty:
+            return None
+        
         # Ensure correct order
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        dow_pattern['day_of_week'] = pd.Categorical(dow_pattern['day_of_week'], categories=day_order, ordered=True)
-        dow_pattern = dow_pattern.sort_values('day_of_week')
+        dow_pattern['day_of_week'] = pd.Categorical(
+            dow_pattern['day_of_week'], 
+            categories=day_order, 
+            ordered=True
+        )
+        dow_pattern = dow_pattern.sort_values('day_of_week').dropna()
         
         fig = go.Figure()
         
         fig.add_trace(go.Bar(
-            x=dow_pattern['day_of_week'],
+            x=dow_pattern['day_of_week'].astype(str),
             y=dow_pattern[column],
             name='Day of Week Pattern',
             marker_color='skyblue'
