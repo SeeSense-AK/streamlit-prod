@@ -1,6 +1,6 @@
 """
-CONTEXT-AWARE Groq-Powered Insights Generator for SeeSense Dashboard
-This version initializes the client only when needed within Streamlit context
+FIXED Groq-Powered Insights Generator for SeeSense Dashboard
+Handles version compatibility issues with Groq client
 """
 import os
 import json
@@ -11,11 +11,20 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 
+# Import Groq with better error handling
+GROQ_AVAILABLE = False
+GROQ_VERSION = None
+
 try:
+    import groq
     from groq import Groq
     GROQ_AVAILABLE = True
-except ImportError:
-    GROQ_AVAILABLE = False
+    GROQ_VERSION = getattr(groq, '__version__', 'unknown')
+    logging.info(f"Groq library loaded successfully, version: {GROQ_VERSION}")
+except ImportError as e:
+    logging.warning(f"Groq not available: {e}")
+except Exception as e:
+    logging.error(f"Error importing Groq: {e}")
 
 logger = logging.getLogger(__name__)
 
@@ -34,22 +43,26 @@ class InsightSummary:
 class GroqInsightsGenerator:
     """
     Generate intelligent insights using Groq AI for non-technical clients
-    CONTEXT-AWARE VERSION - initializes client only when needed
+    FIXED VERSION with better Groq client handling
     """
     
     def __init__(self, api_key: Optional[str] = None):
         """
-        Initialize the insights generator WITHOUT immediately creating Groq client
+        Initialize the insights generator with improved Groq handling
         """
         self.provided_api_key = api_key
         self._client = None
         self._api_key = None
         self._initialization_attempted = False
+        self._initialization_error = None
         self.logger = logging.getLogger(__name__)
+        
+        # Log Groq availability
+        self.logger.info(f"Groq available: {GROQ_AVAILABLE}, version: {GROQ_VERSION}")
     
     def _ensure_client_initialized(self) -> bool:
         """
-        Ensure Groq client is initialized within Streamlit context
+        Ensure Groq client is initialized with better error handling
         Returns True if client is ready, False if fallback should be used
         """
         if self._client is not None:
@@ -60,39 +73,94 @@ class GroqInsightsGenerator:
         
         self._initialization_attempted = True
         
-        # Step 1: Get API key
-        self._api_key = self._get_api_key()
-        if not self._api_key:
-            self.logger.warning("No API key available - using rule-based insights")
-            return False
-        
-        # Step 2: Check if Groq is available
+        # Step 1: Check if Groq is available
         if not GROQ_AVAILABLE:
+            self._initialization_error = "Groq library not available"
             self.logger.warning("Groq library not available - using rule-based insights")
             return False
         
-        # Step 3: Initialize client
+        # Step 2: Get API key
+        self._api_key = self._get_api_key()
+        if not self._api_key:
+            self._initialization_error = "No API key found"
+            self.logger.warning("No API key available - using rule-based insights")
+            return False
+        
+        # Step 3: Initialize client with multiple methods
+        return self._initialize_groq_client()
+    
+    def _initialize_groq_client(self) -> bool:
+        """Initialize Groq client with multiple fallback methods"""
+        
+        # Method 1: Basic initialization (most common)
         try:
             self._client = Groq(api_key=self._api_key)
-            
-            # Test the connection immediately
-            test_response = self._client.chat.completions.create(
+            self.logger.info("Groq client initialized with basic method")
+            return self._test_client_connection()
+        except Exception as e:
+            self.logger.debug(f"Basic Groq initialization failed: {e}")
+        
+        # Method 2: Initialize with explicit parameters
+        try:
+            self._client = Groq(
+                api_key=self._api_key,
+                base_url="https://api.groq.com/openai/v1"
+            )
+            self.logger.info("Groq client initialized with explicit base URL")
+            return self._test_client_connection()
+        except Exception as e:
+            self.logger.debug(f"Explicit URL Groq initialization failed: {e}")
+        
+        # Method 3: Initialize with minimal parameters
+        try:
+            # Create client with only essential parameters
+            import groq
+            self._client = groq.Client(api_key=self._api_key)
+            self.logger.info("Groq client initialized with groq.Client")
+            return self._test_client_connection()
+        except Exception as e:
+            self.logger.debug(f"groq.Client initialization failed: {e}")
+        
+        # Method 4: Try older initialization method
+        try:
+            from groq import Groq as GroqClient
+            self._client = GroqClient(api_key=self._api_key)
+            self.logger.info("Groq client initialized with GroqClient alias")
+            return self._test_client_connection()
+        except Exception as e:
+            self.logger.debug(f"GroqClient alias initialization failed: {e}")
+        
+        # All methods failed
+        self._initialization_error = "All Groq initialization methods failed"
+        self.logger.error("Failed to initialize Groq client with any method - using rule-based insights")
+        return False
+    
+    def _test_client_connection(self) -> bool:
+        """Test the Groq client connection"""
+        try:
+            # Use a minimal test request
+            response = self._client.chat.completions.create(
                 model="llama3-8b-8192",
-                messages=[{"role": "user", "content": "Test"}],
+                messages=[{"role": "user", "content": "Hi"}],
                 temperature=0.1,
                 max_tokens=5
             )
             
-            self.logger.info("Groq client initialized and tested successfully")
-            return True
-            
+            if response and response.choices:
+                self.logger.info("Groq API connection test successful")
+                return True
+            else:
+                self.logger.warning("Groq API returned empty response")
+                return False
+                
         except Exception as e:
-            self.logger.error(f"Failed to initialize or test Groq client: {e}")
+            self.logger.error(f"Groq API connection test failed: {e}")
             self._client = None
+            self._initialization_error = f"API test failed: {str(e)}"
             return False
     
     def _get_api_key(self) -> Optional[str]:
-        """Get API key from multiple sources, optimized for Streamlit context"""
+        """Get API key from multiple sources"""
         
         # Source 1: Provided key
         if self.provided_api_key:
@@ -105,35 +173,27 @@ class GroqInsightsGenerator:
             self.logger.debug("Using environment variable API key")
             return env_key
         
-        # Source 3: Streamlit secrets (within context)
+        # Source 3: Streamlit secrets
         try:
             import streamlit as st
             
-            # Check if we're in Streamlit context by accessing session_state
-            _ = st.session_state
-            
-            # Try direct access
+            # Check if we're in Streamlit context
             try:
-                streamlit_key = st.secrets["GROQ_API_KEY"]
-                if streamlit_key:
-                    self.logger.debug("Using Streamlit secrets API key (direct)")
-                    return streamlit_key
-            except KeyError:
-                pass
-            except Exception as e:
-                self.logger.debug(f"Direct secrets access failed: {e}")
-            
-            # Try get method
-            try:
+                _ = st.session_state
+                
+                # Try direct access
                 streamlit_key = st.secrets.get("GROQ_API_KEY")
                 if streamlit_key:
-                    self.logger.debug("Using Streamlit secrets API key (get method)")
+                    self.logger.debug("Using Streamlit secrets API key")
                     return streamlit_key
+                    
             except Exception as e:
-                self.logger.debug(f"Secrets get method failed: {e}")
+                self.logger.debug(f"Streamlit secrets access failed: {e}")
                 
+        except ImportError:
+            self.logger.debug("Streamlit not available")
         except Exception as e:
-            self.logger.debug(f"Streamlit context access failed: {e}")
+            self.logger.debug(f"Streamlit context check failed: {e}")
         
         self.logger.warning("No API key found in any source")
         return None
@@ -151,6 +211,22 @@ class GroqInsightsGenerator:
         if self._api_key is None:
             self._api_key = self._get_api_key()
         return self._api_key
+    
+    @property
+    def initialization_error(self) -> Optional[str]:
+        """Get the initialization error if any"""
+        return self._initialization_error
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get detailed status information for debugging"""
+        return {
+            'groq_available': GROQ_AVAILABLE,
+            'groq_version': GROQ_VERSION,
+            'api_key_available': self.api_key is not None,
+            'client_initialized': self._client is not None,
+            'initialization_attempted': self._initialization_attempted,
+            'initialization_error': self._initialization_error
+        }
     
     def generate_comprehensive_insights(self, 
                                       metrics: Dict[str, Any], 
@@ -294,11 +370,11 @@ class GroqInsightsGenerator:
         return [
             InsightSummary(
                 title="System Status",
-                description="Dashboard is operating with basic analytics. AI insights temporarily unavailable.",
+                description=f"Dashboard is operating with rule-based analytics. AI insights unavailable: {self._initialization_error or 'Unknown error'}",
                 impact_level="Medium",
                 category="Operational",
                 data_points=["AI service unavailable"],
-                recommendations=["Check API configuration", "Verify network connectivity"],
+                recommendations=["Check Groq client configuration", "Verify API key", "Check network connectivity"],
                 confidence_score=0.5,
                 priority_rank=1
             )
@@ -352,7 +428,7 @@ class GroqInsightsGenerator:
         
         prompt += """
         
-        Provide a concise executive summary (150-200 words) for municipal leaders that highlights current status, key priorities, and recommended actions.
+        Provide a concise executive summary (150-200 words) for municipal leaders.
         """
         
         response = self.client.chat.completions.create(
