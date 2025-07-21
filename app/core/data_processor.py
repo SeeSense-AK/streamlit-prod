@@ -1,6 +1,7 @@
 """
 Data processing pipeline for SeeSense Dashboard - Production Version
 Handles only real CSV data, no synthetic data generation
+ENHANCED VERSION with centralized data type cleaning to prevent comparison errors
 """
 import pandas as pd
 import numpy as np
@@ -11,13 +12,13 @@ from datetime import datetime, timedelta
 import streamlit as st
 
 from utils.config import config
-from utils.validators import validate_csv_file, clean_dataframe, get_data_summary
+from utils.validators import get_data_summary
 
 logger = logging.getLogger(__name__)
 
 
 class DataProcessor:
-    """Production data processing class - real CSV data only"""
+    """Production data processing class - real CSV data only with centralized data cleaning"""
     
     def __init__(self):
         """Initialize the data processor"""
@@ -40,10 +41,325 @@ class DataProcessor:
         self._data_cache = {}
         self._cache_timestamps = {}
     
+    def standardize_data_types(self, df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+        """
+        Centralized data type standardization for all datasets.
+        This function runs immediately after CSV loading to ensure consistent data types.
+        """
+        if df is None or df.empty:
+            return df
+        
+        logger.info(f"Standardizing data types for {dataset_name}")
+        df_clean = df.copy()
+        
+        # Define expected data types for each dataset
+        type_definitions = {
+            'routes': {
+                'route_id': 'string',
+                'start_lat': 'float',
+                'start_lon': 'float', 
+                'end_lat': 'float',
+                'end_lon': 'float',
+                'distinct_cyclists': 'int',
+                'days_active': 'int',
+                'popularity_rating': 'int',  # THIS IS KEY - ensures it's always int
+                'avg_speed': 'float',
+                'avg_duration': 'float',
+                'route_type': 'string',
+                'has_bike_lane': 'boolean',
+                'distance_km': 'float'
+            },
+            'braking_hotspots': {
+                'hotspot_id': 'string',
+                'lat': 'float',
+                'lon': 'float',
+                'intensity': 'float',
+                'incidents_count': 'int',
+                'avg_deceleration': 'float',
+                'road_type': 'string',
+                'surface_quality': 'string',
+                'date_recorded': 'datetime',
+                'severity_score': 'float'
+            },
+            'swerving_hotspots': {
+                'hotspot_id': 'string',
+                'lat': 'float',
+                'lon': 'float',
+                'intensity': 'float',
+                'incidents_count': 'int',
+                'avg_lateral_movement': 'float',
+                'road_type': 'string',
+                'obstruction_present': 'string',
+                'date_recorded': 'datetime',
+                'severity_score': 'float'
+            },
+            'time_series': {
+                'date': 'datetime',
+                'total_rides': 'int',
+                'daily_rides': 'int',
+                'incidents': 'int',
+                'avg_speed': 'float',
+                'safety_score': 'float',
+                'incident_rate': 'float',
+                'precipitation_mm': 'float',
+                'temperature': 'float'
+            }
+        }
+        
+        expected_types = type_definitions.get(dataset_name, {})
+        
+        for column, expected_type in expected_types.items():
+            if column not in df_clean.columns:
+                continue
+                
+            try:
+                original_dtype = df_clean[column].dtype
+                
+                if expected_type == 'int':
+                    # Clean string data first
+                    if df_clean[column].dtype == 'object':
+                        df_clean[column] = df_clean[column].astype(str).str.strip()
+                        df_clean[column] = df_clean[column].replace(['', 'nan', 'NaN', 'null', 'NULL', 'None'], pd.NA)
+                    
+                    # Convert to float first to handle decimal strings, then to int
+                    numeric_series = pd.to_numeric(df_clean[column], errors='coerce')
+                    df_clean[column] = numeric_series.round().astype('Int64')  # Nullable integer
+                    
+                elif expected_type == 'float':
+                    # Clean string data first
+                    if df_clean[column].dtype == 'object':
+                        df_clean[column] = df_clean[column].astype(str).str.strip()
+                        df_clean[column] = df_clean[column].replace(['', 'nan', 'NaN', 'null', 'NULL', 'None'], pd.NA)
+                    
+                    df_clean[column] = pd.to_numeric(df_clean[column], errors='coerce')
+                    
+                elif expected_type == 'boolean':
+                    # Comprehensive boolean mapping
+                    bool_map = {
+                        'true': True, 'false': False,
+                        'True': True, 'False': False,
+                        'TRUE': True, 'FALSE': False,
+                        'yes': True, 'no': False,
+                        'Yes': True, 'No': False,
+                        'YES': True, 'NO': False,
+                        'y': True, 'n': False,
+                        'Y': True, 'N': False,
+                        1: True, 0: False,
+                        '1': True, '0': False,
+                        1.0: True, 0.0: False
+                    }
+                    df_clean[column] = df_clean[column].map(bool_map)
+                    
+                elif expected_type == 'datetime':
+                    df_clean[column] = pd.to_datetime(df_clean[column], errors='coerce')
+                    
+                elif expected_type == 'string':
+                    df_clean[column] = df_clean[column].astype(str)
+                    df_clean[column] = df_clean[column].replace(['nan', 'NaN', 'None'], pd.NA)
+                
+                # Log successful conversions
+                if original_dtype != df_clean[column].dtype:
+                    na_count = df_clean[column].isna().sum()
+                    total_count = len(df_clean[column])
+                    success_rate = (total_count - na_count) / total_count * 100 if total_count > 0 else 0
+                    logger.info(f"  {column}: {original_dtype} → {df_clean[column].dtype} (Success: {success_rate:.1f}%)")
+            
+            except Exception as e:
+                logger.error(f"Failed to convert column '{column}' to {expected_type}: {e}")
+                # Continue with original data if conversion fails
+        
+        # Validate critical numeric columns for comparisons
+        critical_numeric_columns = {
+            'routes': ['popularity_rating', 'distinct_cyclists', 'days_active'],
+            'braking_hotspots': ['intensity', 'incidents_count', 'severity_score'],
+            'swerving_hotspots': ['intensity', 'incidents_count', 'severity_score'],
+            'time_series': ['total_rides', 'incidents', 'safety_score']
+        }
+        
+        if dataset_name in critical_numeric_columns:
+            for col in critical_numeric_columns[dataset_name]:
+                if col in df_clean.columns:
+                    # Ensure these are definitely numeric
+                    df_clean[col] = pd.to_numeric(df_clean[col], errors='coerce')
+                    na_count = df_clean[col].isna().sum()
+                    if na_count > 0:
+                        logger.warning(f"  Critical column '{col}' has {na_count} NaN values after conversion")
+        
+        logger.info(f"Data type standardization completed for {dataset_name}")
+        return df_clean
+
+    def apply_data_constraints(self, df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+        """
+        Apply data constraints and validation rules after type conversion
+        """
+        if df is None or df.empty:
+            return df
+        
+        df_constrained = df.copy()
+        
+        # Define constraints for each dataset
+        constraints = {
+            'routes': {
+                'start_lat': {'min': -90, 'max': 90},
+                'start_lon': {'min': -180, 'max': 180},
+                'end_lat': {'min': -90, 'max': 90},
+                'end_lon': {'min': -180, 'max': 180},
+                'distinct_cyclists': {'min': 1},
+                'days_active': {'min': 1},
+                'popularity_rating': {'min': 1, 'max': 10},
+                'avg_speed': {'min': 0, 'max': 100},
+                'route_type': {'values': ["Commute", "Leisure", "Exercise", "Mixed"]}
+            },
+            'braking_hotspots': {
+                'lat': {'min': -90, 'max': 90},
+                'lon': {'min': -180, 'max': 180},
+                'intensity': {'min': 0, 'max': 10},
+                'incidents_count': {'min': 0},
+                'avg_deceleration': {'min': 0},
+                'road_type': {'values': ["Junction", "Crossing", "Roundabout", "Straight", "Other"]}
+            },
+            'swerving_hotspots': {
+                'lat': {'min': -90, 'max': 90},
+                'lon': {'min': -180, 'max': 180},
+                'intensity': {'min': 0, 'max': 10},
+                'incidents_count': {'min': 0},
+                'avg_lateral_movement': {'min': 0}
+            },
+            'time_series': {
+                'total_rides': {'min': 0},
+                'daily_rides': {'min': 0},
+                'incidents': {'min': 0},
+                'safety_score': {'min': 0, 'max': 10},
+                'incident_rate': {'min': 0}
+            }
+        }
+        
+        dataset_constraints = constraints.get(dataset_name, {})
+        original_count = len(df_constrained)
+        
+        for column, constraint_dict in dataset_constraints.items():
+            if column not in df_constrained.columns:
+                continue
+            
+            # Apply min/max constraints (only for numeric columns)
+            if 'min' in constraint_dict:
+                min_val = constraint_dict['min']
+                before_count = len(df_constrained)
+                df_constrained = df_constrained[
+                    (df_constrained[column].isna()) | (df_constrained[column] >= min_val)
+                ]
+                removed = before_count - len(df_constrained)
+                if removed > 0:
+                    logger.info(f"  Removed {removed} rows with {column} < {min_val}")
+            
+            if 'max' in constraint_dict:
+                max_val = constraint_dict['max']
+                before_count = len(df_constrained)
+                df_constrained = df_constrained[
+                    (df_constrained[column].isna()) | (df_constrained[column] <= max_val)
+                ]
+                removed = before_count - len(df_constrained)
+                if removed > 0:
+                    logger.info(f"  Removed {removed} rows with {column} > {max_val}")
+            
+            # Apply categorical constraints
+            if 'values' in constraint_dict:
+                allowed_values = constraint_dict['values']
+                before_count = len(df_constrained)
+                df_constrained = df_constrained[
+                    (df_constrained[column].isna()) | (df_constrained[column].isin(allowed_values))
+                ]
+                removed = before_count - len(df_constrained)
+                if removed > 0:
+                    logger.info(f"  Removed {removed} rows with invalid {column} values")
+        
+        final_count = len(df_constrained)
+        if original_count != final_count:
+            logger.info(f"Constraint application: {original_count} → {final_count} rows ({original_count - final_count} removed)")
+        
+        return df_constrained
+
+    def _is_cache_valid(self, dataset_name: str) -> bool:
+        """Check if cached data is still valid"""
+        if dataset_name not in self._cache_timestamps:
+            return False
+        
+        cache_time = self._cache_timestamps[dataset_name]
+        return (datetime.now() - cache_time) < timedelta(seconds=self.cache_ttl)
+
+    def _process_dataset(self, df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
+        """Process dataset after loading and cleaning"""
+        if df is None or df.empty:
+            return df
+        
+        df_processed = df.copy()
+        
+        # Dataset-specific processing
+        if dataset_name == 'routes':
+            # Calculate distance if missing
+            if 'distance_km' not in df_processed.columns or df_processed['distance_km'].isna().all():
+                df_processed['distance_km'] = self._calculate_route_distance(df_processed)
+        
+        elif dataset_name in ['braking_hotspots', 'swerving_hotspots']:
+            # Calculate severity score if missing
+            if 'severity_score' not in df_processed.columns or df_processed['severity_score'].isna().all():
+                df_processed['severity_score'] = self._calculate_severity_score(df_processed)
+        
+        return df_processed
+
+    def _calculate_route_distance(self, routes_df: pd.DataFrame) -> pd.Series:
+        """Calculate route distance using Haversine formula"""
+        try:
+            # Simple Haversine distance calculation
+            lat1, lon1 = np.radians(routes_df['start_lat']), np.radians(routes_df['start_lon'])
+            lat2, lon2 = np.radians(routes_df['end_lat']), np.radians(routes_df['end_lon'])
+            
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+            
+            a = np.sin(dlat/2)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2)**2
+            c = 2 * np.arcsin(np.sqrt(a))
+            distance = 6371 * c  # Earth radius in km
+            
+            return distance
+        except Exception as e:
+            logger.warning(f"Error calculating route distance: {e}")
+            return pd.Series([5.0] * len(routes_df))  # Default 5km
+
+    def _calculate_severity_score(self, hotspots_df: pd.DataFrame) -> pd.Series:
+        """Calculate severity score for hotspots"""
+        try:
+            if 'intensity' in hotspots_df.columns and 'incidents_count' in hotspots_df.columns:
+                # Weighted combination of intensity and incident count
+                intensity_norm = hotspots_df['intensity'] / 10  # Normalize to 0-1
+                incidents_norm = np.log1p(hotspots_df['incidents_count']) / 10  # Log scale
+                severity = (intensity_norm * 0.7 + incidents_norm * 0.3) * 10
+                return severity.clip(0, 10)
+            else:
+                return pd.Series([5.0] * len(hotspots_df))  # Default severity
+        except Exception as e:
+            logger.warning(f"Error calculating severity score: {e}")
+            return pd.Series([5.0] * len(hotspots_df))
+
+    def _get_processing_info(self, df: pd.DataFrame, dataset_name: str) -> Dict[str, Any]:
+        """Get processing information for metadata"""
+        info = {
+            'dataset_type': dataset_name,
+            'processing_timestamp': datetime.now(),
+            'total_columns': len(df.columns),
+            'numeric_columns': len(df.select_dtypes(include=[np.number]).columns),
+            'categorical_columns': len(df.select_dtypes(include=['object', 'category']).columns),
+            'datetime_columns': len(df.select_dtypes(include=['datetime64']).columns),
+            'missing_data': df.isnull().sum().sum(),
+            'data_completeness': (1 - df.isnull().sum().sum() / (len(df) * len(df.columns))) * 100
+        }
+        
+        return info
+
     @st.cache_data
     def load_dataset(_self, dataset_name: str, force_reload: bool = False) -> Tuple[Optional[pd.DataFrame], Dict[str, Any]]:
         """
-        Load and process a dataset from CSV file
+        Load and process a dataset from CSV file with comprehensive data cleaning
         
         Args:
             dataset_name: Name of the dataset to load
@@ -77,64 +393,93 @@ class DataProcessor:
             }
             return None, metadata
         
-        # Validate and load CSV
-        is_valid, df, errors, warnings = validate_csv_file(csv_file, dataset_name)
-        
-        if not is_valid:
-            logger.error(f"Validation failed for {dataset_name}: {errors}")
-            metadata = {
-                'dataset_name': dataset_name,
-                'source_file': str(csv_file),
-                'load_timestamp': datetime.now(),
-                'validation_errors': errors,
-                'validation_warnings': warnings,
-                'data_summary': {},
-                'processing_info': {},
-                'status': 'validation_failed'
-            }
-            return None, metadata
-        
-        if warnings:
-            logger.warning(f"Validation warnings for {dataset_name}: {warnings}")
-        
-        # Clean and process data
-        df_cleaned = clean_dataframe(df, dataset_name)
-        
-        if df_cleaned.empty:
-            logger.warning(f"No valid data remaining after cleaning for {dataset_name}")
+        try:
+            # Load CSV with basic error handling
+            logger.info(f"Loading CSV file: {csv_file}")
+            df_raw = pd.read_csv(csv_file)
+            
+            if df_raw.empty:
+                logger.warning(f"Empty CSV file: {csv_file}")
+                metadata = {
+                    'dataset_name': dataset_name,
+                    'source_file': str(csv_file),
+                    'load_timestamp': datetime.now(),
+                    'validation_errors': ["Empty CSV file"],
+                    'validation_warnings': [],
+                    'data_summary': {},
+                    'processing_info': {},
+                    'status': 'empty_file'
+                }
+                return None, metadata
+            
+            logger.info(f"Raw CSV loaded: {len(df_raw)} rows, {len(df_raw.columns)} columns")
+            
+            # STEP 1: Standardize data types (THIS FIXES THE MAIN ISSUE)
+            df_typed = _self.standardize_data_types(df_raw, dataset_name)
+            
+            # STEP 2: Apply data constraints
+            df_constrained = _self.apply_data_constraints(df_typed, dataset_name)
+            
+            # STEP 3: Remove completely empty rows
+            df_clean = df_constrained.dropna(how='all')
+            
+            # STEP 4: Process dataset-specific features
+            df_final = _self._process_dataset(df_clean, dataset_name)
+            
+            if df_final.empty:
+                logger.warning(f"No valid data remaining after cleaning for {dataset_name}")
+                metadata = {
+                    'dataset_name': dataset_name,
+                    'source_file': str(csv_file),
+                    'load_timestamp': datetime.now(),
+                    'validation_errors': [],
+                    'validation_warnings': ["No valid data after cleaning"],
+                    'data_summary': {},
+                    'processing_info': {},
+                    'status': 'empty_after_cleaning'
+                }
+                return None, metadata
+            
+            # Generate metadata
             metadata = {
                 'dataset_name': dataset_name,
                 'source_file': str(csv_file),
                 'load_timestamp': datetime.now(),
                 'validation_errors': [],
-                'validation_warnings': warnings + ["No valid data after cleaning"],
+                'validation_warnings': [],
+                'data_summary': {
+                    'row_count': len(df_final),
+                    'column_count': len(df_final.columns),
+                    'raw_row_count': len(df_raw),
+                    'cleaned_row_count': len(df_final),
+                    'data_types': {col: str(dtype) for col, dtype in df_final.dtypes.items()},
+                    'columns': list(df_final.columns)
+                },
+                'processing_info': _self._get_processing_info(df_final, dataset_name),
+                'status': 'success'
+            }
+            
+            # Cache the results
+            _self._data_cache[dataset_name] = (df_final, metadata)
+            _self._cache_timestamps[dataset_name] = datetime.now()
+            
+            logger.info(f"Successfully loaded and cleaned {dataset_name}: {len(df_final)} rows")
+            return df_final, metadata
+            
+        except Exception as e:
+            logger.error(f"Error loading {dataset_name}: {e}")
+            metadata = {
+                'dataset_name': dataset_name,
+                'source_file': str(csv_file),
+                'load_timestamp': datetime.now(),
+                'validation_errors': [f"Loading error: {str(e)}"],
+                'validation_warnings': [],
                 'data_summary': {},
                 'processing_info': {},
-                'status': 'empty_after_cleaning'
+                'status': 'error'
             }
             return None, metadata
-        
-        df_processed = _self._process_dataset(df_cleaned, dataset_name)
-        
-        # Generate metadata
-        metadata = {
-            'dataset_name': dataset_name,
-            'source_file': str(csv_file),
-            'load_timestamp': datetime.now(),
-            'validation_errors': errors,
-            'validation_warnings': warnings,
-            'data_summary': get_data_summary(df_processed),
-            'processing_info': _self._get_processing_info(df_processed, dataset_name),
-            'status': 'success'
-        }
-        
-        # Cache the results
-        _self._data_cache[dataset_name] = (df_processed, metadata)
-        _self._cache_timestamps[dataset_name] = datetime.now()
-        
-        logger.info(f"Successfully loaded {dataset_name}: {len(df_processed)} rows")
-        return df_processed, metadata
-    
+
     def load_all_datasets(self, force_reload: bool = False) -> Dict[str, Tuple[Optional[pd.DataFrame], Dict[str, Any]]]:
         """
         Load all available datasets
@@ -165,7 +510,7 @@ class DataProcessor:
                 all_data[dataset_name] = (None, metadata)
         
         return all_data
-    
+
     def get_data_status(self) -> Dict[str, Any]:
         """
         Get status of all datasets
@@ -220,290 +565,21 @@ class DataProcessor:
         
         status['available_datasets'] = available_count
         return status
-    
-    def get_available_datasets(self) -> List[str]:
-        """
-        Get list of datasets that have CSV files available
-        
-        Returns:
-            List of dataset names with available CSV files
-        """
-        available = []
-        for dataset_name, filename in self.datasets.items():
-            csv_path = self.raw_data_path / filename
-            if csv_path.exists():
-                available.append(dataset_name)
-        return available
-    
-    def check_data_requirements(self) -> Dict[str, Any]:
-        """
-        Check which data files are missing and provide guidance
-        
-        Returns:
-            Dictionary with missing files and setup instructions
-        """
-        missing_files = []
-        available_files = []
-        
-        for dataset_name, filename in self.datasets.items():
-            csv_path = self.raw_data_path / filename
-            if csv_path.exists():
-                available_files.append({
-                    'dataset': dataset_name,
-                    'filename': filename,
-                    'size_mb': csv_path.stat().st_size / (1024 * 1024),
-                    'modified': datetime.fromtimestamp(csv_path.stat().st_mtime)
-                })
-            else:
-                missing_files.append({
-                    'dataset': dataset_name,
-                    'filename': filename,
-                    'path': str(csv_path)
-                })
-        
+
+    def clear_cache(self):
+        """Clear all cached data"""
+        self._data_cache.clear()
+        self._cache_timestamps.clear()
+        logger.info("Data cache cleared")
+
+    def get_cache_info(self) -> Dict[str, Any]:
+        """Get information about cached data"""
         return {
-            'data_directory': str(self.raw_data_path),
-            'missing_files': missing_files,
-            'available_files': available_files,
-            'setup_complete': len(missing_files) == 0,
-            'setup_instructions': self._get_setup_instructions(missing_files)
+            'cached_datasets': list(self._data_cache.keys()),
+            'cache_timestamps': self._cache_timestamps.copy(),
+            'cache_size': len(self._data_cache)
         }
-    
-    def _get_setup_instructions(self, missing_files: List[Dict]) -> List[str]:
-        """Generate setup instructions for missing files"""
-        if not missing_files:
-            return ["✅ All required data files are present!"]
-        
-        instructions = [
-            "📁 To set up your dashboard data:",
-            f"1. Navigate to the data directory: {self.raw_data_path}",
-            "2. Place your CSV files with the following names:"
-        ]
-        
-        for file_info in missing_files:
-            instructions.append(f"   • {file_info['filename']} (for {file_info['dataset']} data)")
-        
-        instructions.extend([
-            "",
-            "3. Ensure your CSV files match the expected schema (see data_schema.yaml)",
-            "4. Refresh the dashboard to load your data",
-            "",
-            "💡 The dashboard will validate your data and show any issues that need to be resolved."
-        ])
-        
-        return instructions
-    
-    def _is_cache_valid(self, dataset_name: str) -> bool:
-        """Check if cached data is still valid"""
-        if dataset_name not in self._cache_timestamps:
-            return False
-        
-        cache_age = datetime.now() - self._cache_timestamps[dataset_name]
-        return cache_age.total_seconds() < self.cache_ttl
-    
-    def _process_dataset(self, df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
-        """
-        Apply dataset-specific processing
-        
-        Args:
-            df: DataFrame to process
-            dataset_name: Name of the dataset
-            
-        Returns:
-            Processed DataFrame
-        """
-        df_processed = df.copy()
-        
-        if dataset_name == 'routes':
-            df_processed = self._process_routes_data(df_processed)
-        elif dataset_name == 'braking_hotspots':
-            df_processed = self._process_braking_data(df_processed)
-        elif dataset_name == 'swerving_hotspots':
-            df_processed = self._process_swerving_data(df_processed)
-        elif dataset_name == 'time_series':
-            df_processed = self._process_time_series_data(df_processed)
-        
-        return df_processed
-    
-    def _process_routes_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process routes dataset"""
-        # Calculate distance if not present
-        if 'distance_km' not in df.columns:
-            df['distance_km'] = self._calculate_distance(
-                df['start_lat'], df['start_lon'], df['end_lat'], df['end_lon']
-            )
-        
-        # Calculate derived metrics
-        df['cyclists_per_day'] = df['distinct_cyclists'] / df['days_active']
-        df['popularity_score'] = (df['popularity_rating'] * df['distinct_cyclists'] / 100).round(2)
-        
-        # Categorize routes by length
-        df['route_length_category'] = pd.cut(
-            df['distance_km'], 
-            bins=[0, 2, 5, 10, float('inf')],
-            labels=['Short (<2km)', 'Medium (2-5km)', 'Long (5-10km)', 'Very Long (>10km)']
-        )
-        
-        return df
-    
-    def _process_braking_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process braking hotspots dataset - FIXED VERSION"""
-        # Calculate severity score if not present
-        if 'severity_score' not in df.columns:
-            # FIXED: Ensure all inputs are numeric before calculation
-            df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
-            df['incidents_count'] = pd.to_numeric(df['incidents_count'], errors='coerce')
-            df['avg_deceleration'] = pd.to_numeric(df['avg_deceleration'], errors='coerce')
-        
-            # Fill NaN values with 0 for calculation
-            df['intensity'] = df['intensity'].fillna(0)
-            df['incidents_count'] = df['incidents_count'].fillna(0)
-            df['avg_deceleration'] = df['avg_deceleration'].fillna(0)
-        
-            df['severity_score'] = (
-                df['intensity'] * 0.4 + 
-                (df['incidents_count'] / df['incidents_count'].max() * 10) * 0.3 +
-                (df['avg_deceleration'] / df['avg_deceleration'].max() * 10) * 0.3
-            ).round(2)
-        else:
-            # FIXED: Ensure severity_score is numeric
-            df['severity_score'] = pd.to_numeric(df['severity_score'], errors='coerce')
-    
-        # Add time-based features
-        if 'date_recorded' in df.columns:
-            df['day_of_week'] = pd.to_datetime(df['date_recorded']).dt.day_name()
-            df['month'] = pd.to_datetime(df['date_recorded']).dt.month
-            df['days_since_recorded'] = (datetime.now() - pd.to_datetime(df['date_recorded'])).dt.days
-    
-        # Risk categorization with safe numeric data
-        try:
-            df['risk_level'] = pd.cut(
-                df['severity_score'],
-                bins=[0, 3, 6, 8, 10],
-                labels=['Low', 'Medium', 'High', 'Critical']
-            )
-        except Exception as e:
-            logger.warning(f"Could not create risk_level categories: {e}")
-            df['risk_level'] = 'Unknown'
-    
-        return df
-
-    def _process_swerving_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process swerving hotspots dataset - FIXED VERSION"""
-        # Calculate severity score if not present
-        if 'severity_score' not in df.columns:
-            # FIXED: Ensure all inputs are numeric before calculation
-            df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
-            df['incidents_count'] = pd.to_numeric(df['incidents_count'], errors='coerce')
-            df['avg_lateral_movement'] = pd.to_numeric(df['avg_lateral_movement'], errors='coerce')
-        
-            # Fill NaN values with 0 for calculation
-            df['intensity'] = df['intensity'].fillna(0)
-            df['incidents_count'] = df['incidents_count'].fillna(0)
-            df['avg_lateral_movement'] = df['avg_lateral_movement'].fillna(0)
-        
-            df['severity_score'] = (
-                df['intensity'] * 0.5 + 
-                (df['incidents_count'] / df['incidents_count'].max() * 10) * 0.3 +
-                (df['avg_lateral_movement'] / df['avg_lateral_movement'].max() * 10) * 0.2
-            ).round(2)
-        else:
-            # FIXED: Ensure severity_score is numeric
-            df['severity_score'] = pd.to_numeric(df['severity_score'], errors='coerce')
-    
-        # Add time-based features
-        if 'date_recorded' in df.columns:
-            df['day_of_week'] = pd.to_datetime(df['date_recorded']).dt.day_name()
-            df['month'] = pd.to_datetime(df['date_recorded']).dt.month
-            df['days_since_recorded'] = (datetime.now() - pd.to_datetime(df['date_recorded'])).dt.days
-    
-        # Risk categorization with safe numeric data
-        try:
-            df['risk_level'] = pd.cut(
-                df['severity_score'],
-                bins=[0, 3, 6, 8, 10],
-                labels=['Low', 'Medium', 'High', 'Critical']
-            )
-        except Exception as e:
-            logger.warning(f"Could not create risk_level categories: {e}")
-            df['risk_level'] = 'Unknown'
-    
-        return df
-    
-    def _process_time_series_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process time series dataset"""
-        # Ensure date column is datetime
-        df['date'] = pd.to_datetime(df['date'])
-        
-        # Sort by date
-        df = df.sort_values('date').reset_index(drop=True)
-        
-        # Add time-based features
-        df['day_of_week'] = df['date'].dt.day_name()
-        df['month'] = df['date'].dt.month
-        df['quarter'] = df['date'].dt.quarter
-        df['is_weekend'] = df['date'].dt.weekday >= 5
-        
-        # Calculate rolling averages
-        df['incidents_7day_avg'] = df['incidents'].rolling(window=7, min_periods=1).mean()
-        df['incidents_30day_avg'] = df['incidents'].rolling(window=30, min_periods=1).mean()
-        
-        # Calculate safety metrics
-        df['safety_score'] = 10 - (df['incidents'] / df['total_rides'] * 100).clip(0, 10)
-        df['incident_rate'] = (df['incidents'] / df['total_rides'] * 1000).round(2)  # per 1000 rides
-        
-        # Weather impact indicators
-        if 'precipitation_mm' in df.columns:
-            df['rainy_day'] = df['precipitation_mm'] > 1
-        if 'temperature' in df.columns:
-            df['temp_category'] = pd.cut(
-                df['temperature'],
-                bins=[-float('inf'), 5, 15, 25, float('inf')],
-                labels=['Cold', 'Cool', 'Mild', 'Warm']
-            )
-        
-        return df
-    
-    def _calculate_distance(self, lat1: pd.Series, lon1: pd.Series, 
-                          lat2: pd.Series, lon2: pd.Series) -> pd.Series:
-        """Calculate haversine distance between coordinates"""
-        R = 6371  # Earth's radius in kilometers
-        
-        lat1_rad = np.radians(lat1)
-        lon1_rad = np.radians(lon1)
-        lat2_rad = np.radians(lat2)
-        lon2_rad = np.radians(lon2)
-        
-        dlat = lat2_rad - lat1_rad
-        dlon = lon2_rad - lon1_rad
-        
-        a = np.sin(dlat/2)**2 + np.cos(lat1_rad) * np.cos(lat2_rad) * np.sin(dlon/2)**2
-        c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-        
-        return R * c
-    
-    def _get_processing_info(self, df: pd.DataFrame, dataset_name: str) -> Dict[str, Any]:
-        """Get processing information for the dataset"""
-        info = {
-            'processed_columns': list(df.columns),
-            'derived_features': [],
-            'processing_timestamp': datetime.now()
-        }
-        
-        # Track derived features by dataset
-        if dataset_name == 'routes':
-            derived_features = ['distance_km', 'cyclists_per_day', 'popularity_score', 'route_length_category']
-        elif dataset_name in ['braking_hotspots', 'swerving_hotspots']:
-            derived_features = ['severity_score', 'day_of_week', 'month', 'days_since_recorded', 'risk_level']
-        elif dataset_name == 'time_series':
-            derived_features = ['day_of_week', 'month', 'quarter', 'is_weekend', 
-                              'incidents_7day_avg', 'incidents_30day_avg', 'safety_score', 'incident_rate']
-        else:
-            derived_features = []
-        
-        info['derived_features'] = [col for col in derived_features if col in df.columns]
-        return info
 
 
-# Global data processor instance
+# Create singleton instance
 data_processor = DataProcessor()
