@@ -150,7 +150,7 @@ def render_overview_filters(routes_df, time_series_df):
                 routes_df = routes_df[routes_df['popularity_rating'] >= min_popularity_value]  # <-- Use converted value
         except Exception as e:
             logger.warning(f"Error applying popularity filter: {e}")
-                filters['min_popularity'] = 1
+            filters['min_popularity'] = 1
     
         return filters
 
