@@ -347,62 +347,87 @@ class DataProcessor:
         return df
     
     def _process_braking_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process braking hotspots dataset"""
+        """Process braking hotspots dataset - FIXED VERSION"""
         # Calculate severity score if not present
         if 'severity_score' not in df.columns:
+            # FIXED: Ensure all inputs are numeric before calculation
+            df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
+            df['incidents_count'] = pd.to_numeric(df['incidents_count'], errors='coerce')
+            df['avg_deceleration'] = pd.to_numeric(df['avg_deceleration'], errors='coerce')
+        
+            # Fill NaN values with 0 for calculation
+            df['intensity'] = df['intensity'].fillna(0)
+            df['incidents_count'] = df['incidents_count'].fillna(0)
+            df['avg_deceleration'] = df['avg_deceleration'].fillna(0)
+        
             df['severity_score'] = (
                 df['intensity'] * 0.4 + 
                 (df['incidents_count'] / df['incidents_count'].max() * 10) * 0.3 +
                 (df['avg_deceleration'] / df['avg_deceleration'].max() * 10) * 0.3
             ).round(2)
-        
+        else:
+            # FIXED: Ensure severity_score is numeric
+            df['severity_score'] = pd.to_numeric(df['severity_score'], errors='coerce')
+    
         # Add time-based features
         if 'date_recorded' in df.columns:
             df['day_of_week'] = pd.to_datetime(df['date_recorded']).dt.day_name()
             df['month'] = pd.to_datetime(df['date_recorded']).dt.month
             df['days_since_recorded'] = (datetime.now() - pd.to_datetime(df['date_recorded'])).dt.days
-        
-        # Risk categorization
-        df['risk_level'] = pd.cut(
-            df['severity_score'],
-            bins=[0, 3, 6, 8, 10],
-            labels=['Low', 'Medium', 'High', 'Critical']
-        )
-        
-        return df
     
+        # Risk categorization with safe numeric data
+        try:
+            df['risk_level'] = pd.cut(
+                df['severity_score'],
+                bins=[0, 3, 6, 8, 10],
+                labels=['Low', 'Medium', 'High', 'Critical']
+            )
+        except Exception as e:
+            logger.warning(f"Could not create risk_level categories: {e}")
+            df['risk_level'] = 'Unknown'
+    
+        return df
+
     def _process_swerving_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process swerving hotspots dataset"""
+        """Process swerving hotspots dataset - FIXED VERSION"""
         # Calculate severity score if not present
         if 'severity_score' not in df.columns:
+            # FIXED: Ensure all inputs are numeric before calculation
+            df['intensity'] = pd.to_numeric(df['intensity'], errors='coerce')
+            df['incidents_count'] = pd.to_numeric(df['incidents_count'], errors='coerce')
+            df['avg_lateral_movement'] = pd.to_numeric(df['avg_lateral_movement'], errors='coerce')
+        
+            # Fill NaN values with 0 for calculation
+            df['intensity'] = df['intensity'].fillna(0)
+            df['incidents_count'] = df['incidents_count'].fillna(0)
+            df['avg_lateral_movement'] = df['avg_lateral_movement'].fillna(0)
+        
             df['severity_score'] = (
                 df['intensity'] * 0.5 + 
                 (df['incidents_count'] / df['incidents_count'].max() * 10) * 0.3 +
                 (df['avg_lateral_movement'] / df['avg_lateral_movement'].max() * 10) * 0.2
             ).round(2)
-        
+        else:
+            # FIXED: Ensure severity_score is numeric
+            df['severity_score'] = pd.to_numeric(df['severity_score'], errors='coerce')
+    
         # Add time-based features
         if 'date_recorded' in df.columns:
             df['day_of_week'] = pd.to_datetime(df['date_recorded']).dt.day_name()
             df['month'] = pd.to_datetime(df['date_recorded']).dt.month
             df['days_since_recorded'] = (datetime.now() - pd.to_datetime(df['date_recorded'])).dt.days
-        
-        # Categorize by cause if not present
-        if 'cause_category' not in df.columns:
-            df['cause_category'] = df['road_type'].map({
-                'Junction': 'Traffic_Control',
-                'Crossing': 'Pedestrian_Interaction',
-                'Roundabout': 'Traffic_Control',
-                'Straight': 'Surface_Issue'
-            }).fillna('Unknown')
-        
-        # Risk categorization
-        df['risk_level'] = pd.cut(
-            df['severity_score'],
-            bins=[0, 3, 6, 8, 10],
-            labels=['Low', 'Medium', 'High', 'Critical']
-        )
-        
+    
+        # Risk categorization with safe numeric data
+        try:
+            df['risk_level'] = pd.cut(
+                df['severity_score'],
+                bins=[0, 3, 6, 8, 10],
+                labels=['Low', 'Medium', 'High', 'Critical']
+            )
+        except Exception as e:
+            logger.warning(f"Could not create risk_level categories: {e}")
+            df['risk_level'] = 'Unknown'
+    
         return df
     
     def _process_time_series_data(self, df: pd.DataFrame) -> pd.DataFrame:
