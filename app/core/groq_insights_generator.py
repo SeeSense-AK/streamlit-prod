@@ -1,15 +1,17 @@
 """
 Groq-Powered Insights Generator for SeeSense Dashboard
-REWRITTEN VERSION with reliable environment variable handling
+REWRITTEN VERSION with reliable environment variable handling and smart caching
 """
 import os
 import json
 import logging
-from typing import Dict, List, Any, Optional
+import hashlib
+from typing import Dict, List, Any, Optional, Tuple
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
+import streamlit as st
 
 # Load environment variables
 try:
@@ -164,37 +166,79 @@ class GroqInsightsGenerator:
             self.logger.warning("No Groq API key found - AI insights will not be available")
             return False
         
-        # Initialize Groq client with multiple compatibility methods
-        initialization_methods = [
-            ("Standard Groq()", lambda: Groq(api_key=self._api_key)),
-            ("Groq with explicit params", lambda: Groq(api_key=self._api_key, timeout=30)),
-            ("groq.Client()", lambda: __import__('groq').Client(api_key=self._api_key)),
-            ("GROQ_CLIENT_CLASS", lambda: GROQ_CLIENT_CLASS(api_key=self._api_key) if GROQ_CLIENT_CLASS else None)
-        ]
+        # Initialize Groq client with workaround for 'proxies' parameter issue
         
-        for method_name, method_func in initialization_methods:
-            try:
-                self.logger.debug(f"Trying {method_name}")
-                client = method_func()
-                if client is not None:
-                    self._client = client
-                    self.logger.info(f"Groq client initialized successfully with {method_name}")
+        # First, try to clear any environment variables that might cause proxy injection
+        proxy_vars = ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY']
+        original_proxies = {}
+        for var in proxy_vars:
+            if var in os.environ:
+                original_proxies[var] = os.environ[var]
+                del os.environ[var]
+        
+        try:
+            # Method 1: Most basic initialization
+            self.logger.debug("Attempting basic Groq initialization")
+            self._client = GROQ_CLIENT_CLASS(api_key=self._api_key)
+            self.logger.info("Groq client initialized successfully")
+            return self._test_connection()
+            
+        except TypeError as e:
+            if "unexpected keyword argument 'proxies'" in str(e):
+                self.logger.warning("Detected 'proxies' parameter issue, trying workarounds...")
+                
+                # Method 2: Try using explicit parameter filtering
+                try:
+                    # Import fresh and try again
+                    import importlib
+                    import groq
+                    importlib.reload(groq)
+                    
+                    self._client = groq.Groq(api_key=self._api_key)
+                    self.logger.info("Groq client initialized with reload workaround")
                     return self._test_connection()
                     
-            except TypeError as e:
-                if "unexpected keyword argument" in str(e):
-                    self.logger.debug(f"{method_name} failed due to parameter mismatch: {e}")
-                    continue
-                else:
-                    self.logger.debug(f"{method_name} failed with TypeError: {e}")
-                    continue
-            except Exception as e:
-                self.logger.debug(f"{method_name} failed: {e}")
-                continue
+                except Exception as e2:
+                    self.logger.debug(f"Reload method failed: {e2}")
+                
+                # Method 3: Try creating with manual kwargs filtering
+                try:
+                    # Create kwargs dict and ensure only valid parameters
+                    init_kwargs = {'api_key': self._api_key}
+                    
+                    # Use __import__ to get a fresh instance
+                    groq_module = __import__('groq')
+                    self._client = groq_module.Groq(**init_kwargs)
+                    self.logger.info("Groq client initialized with filtered kwargs")
+                    return self._test_connection()
+                    
+                except Exception as e3:
+                    self.logger.debug(f"Filtered kwargs method failed: {e3}")
+                    
+                # Method 4: Last resort - try different class
+                try:
+                    import groq
+                    if hasattr(groq, 'Client'):
+                        self._client = groq.Client(api_key=self._api_key)
+                        self.logger.info("Groq client initialized with groq.Client")
+                        return self._test_connection()
+                except Exception as e4:
+                    self.logger.debug(f"groq.Client method failed: {e4}")
+                    
+            else:
+                self.logger.error(f"Different TypeError: {e}")
+                
+        except Exception as e:
+            self.logger.error(f"Unexpected error during Groq initialization: {e}")
+            
+        finally:
+            # Restore original proxy environment variables
+            for var, value in original_proxies.items():
+                os.environ[var] = value
         
         # All methods failed
         self.logger.error("All Groq client initialization methods failed")
-        self._initialization_error = "All initialization methods failed - check Groq version compatibility"
+        self._initialization_error = "All initialization methods failed - 'proxies' parameter issue"
         return False
     
     def _test_connection(self) -> bool:
@@ -261,18 +305,122 @@ class GroqInsightsGenerator:
                                       metrics: Dict[str, Any], 
                                       routes_df: pd.DataFrame = None,
                                       hotspots_data: Dict[str, Any] = None,
-                                      time_series_df: pd.DataFrame = None) -> List[InsightSummary]:
+                                      time_series_df: pd.DataFrame = None,
+                                      use_cache: bool = True,
+                                      force_refresh: bool = False) -> List[InsightSummary]:
         """
-        Generate comprehensive insights from cycling safety data
+        Generate comprehensive insights from cycling safety data with caching
         
         Args:
             metrics: Dictionary of calculated metrics
             routes_df: Optional routes dataframe
             hotspots_data: Optional hotspots data
             time_series_df: Optional time series dataframe
+            use_cache: Whether to use caching (default True)
+            force_refresh: Force cache refresh (default False)
             
         Returns:
             List of InsightSummary objects
+        """
+        if use_cache:
+            return self._get_cached_insights(metrics, routes_df, force_refresh)
+        else:
+            return self._generate_insights_direct(metrics, routes_df, hotspots_data, time_series_df)
+    
+    def _create_cache_key(self, metrics: Dict[str, Any], routes_df: pd.DataFrame = None) -> str:
+        """Create a unique cache key based on data and parameters"""
+        cache_data = {
+            'metrics': {k: v for k, v in metrics.items() if isinstance(v, (int, float, str, bool))},
+            'routes_shape': routes_df.shape if routes_df is not None else None,
+            'timestamp_hour': datetime.now().strftime('%Y-%m-%d-%H')  # Cache expires after 1 hour
+        }
+        
+        cache_string = json.dumps(cache_data, sort_keys=True, default=str)
+        return hashlib.md5(cache_string.encode()).hexdigest()
+    
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _cached_generate_insights(_self, cache_key: str, metrics: Dict[str, Any], routes_shape: Optional[Tuple] = None) -> List[Dict]:
+        """Cached version of insights generation"""
+        logger.info(f"Generating fresh insights (cache miss): {cache_key[:8]}...")
+        
+        # Generate insights using the direct method
+        insights = _self._generate_insights_direct(metrics)
+        
+        # Convert InsightSummary objects to dictionaries for caching
+        insights_dict = []
+        for insight in insights:
+            insights_dict.append({
+                'title': insight.title,
+                'description': insight.description,
+                'impact_level': insight.impact_level,
+                'category': insight.category,
+                'data_points': insight.data_points,
+                'recommendations': insight.recommendations,
+                'confidence_score': insight.confidence_score,
+                'priority_rank': insight.priority_rank
+            })
+        
+        logger.info(f"Generated {len(insights_dict)} insights and cached them")
+        return insights_dict
+    
+    def _get_cached_insights(self, metrics: Dict[str, Any], routes_df: pd.DataFrame = None, force_refresh: bool = False) -> List[InsightSummary]:
+        """Get insights with intelligent caching"""
+        
+        # Create cache key
+        cache_key = self._create_cache_key(metrics, routes_df)
+        
+        # Check if force refresh is requested
+        if force_refresh:
+            logger.info("Force refresh requested - clearing cache")
+            st.cache_data.clear()
+        
+        # Display cache status in Streamlit
+        if hasattr(st, 'session_state'):
+            cache_info = st.session_state.get('insights_cache_info', {})
+            last_cache_key = cache_info.get('last_key')
+            
+            if last_cache_key == cache_key and not force_refresh:
+                st.info("ℹ️ Using cached AI insights (saves tokens)")
+            else:
+                st.info("🔄 Generating fresh AI insights...")
+                st.session_state.insights_cache_info = {
+                    'last_key': cache_key,
+                    'generated_at': datetime.now()
+                }
+        
+        try:
+            # Get cached insights
+            routes_shape = routes_df.shape if routes_df is not None else None
+            insights_dict_list = self._cached_generate_insights(cache_key, metrics, routes_shape)
+            
+            # Convert dictionaries back to InsightSummary objects
+            insights = []
+            for insight_dict in insights_dict_list:
+                insights.append(InsightSummary(
+                    title=insight_dict['title'],
+                    description=insight_dict['description'],
+                    impact_level=insight_dict['impact_level'],
+                    category=insight_dict['category'],
+                    data_points=insight_dict['data_points'],
+                    recommendations=insight_dict['recommendations'],
+                    confidence_score=insight_dict['confidence_score'],
+                    priority_rank=insight_dict['priority_rank']
+                ))
+            
+            return insights
+            
+        except Exception as e:
+            logger.error(f"Error getting cached insights: {e}")
+            # Fallback to direct generation
+            return self._generate_insights_direct(metrics)
+    
+    def _generate_insights_direct(self, 
+                                 metrics: Dict[str, Any], 
+                                 routes_df: pd.DataFrame = None,
+                                 hotspots_data: Dict[str, Any] = None,
+                                 time_series_df: pd.DataFrame = None) -> List[InsightSummary]:
+        """
+        Generate insights directly without caching (original method)
         """
         try:
             insights = []
@@ -298,7 +446,7 @@ class GroqInsightsGenerator:
             return insights
             
         except Exception as e:
-            self.logger.error(f"Error generating comprehensive insights: {e}")
+            self.logger.error(f"Error generating insights: {e}")
             return self._generate_fallback_insights(metrics)
     
     def _generate_safety_insights(self, metrics: Dict[str, Any]) -> List[InsightSummary]:
@@ -494,8 +642,69 @@ class GroqInsightsGenerator:
             )
         ]
     
-    def generate_executive_summary(self, insights: List[InsightSummary], metrics: Dict[str, Any]) -> str:
-        """Generate an executive summary for stakeholders"""
+    def generate_executive_summary(self, insights: List[InsightSummary], metrics: Dict[str, Any], use_cache: bool = True, force_refresh: bool = False) -> str:
+        """Generate an executive summary for stakeholders with caching"""
+        
+        if use_cache:
+            return self._get_cached_executive_summary(insights, metrics, force_refresh)
+        else:
+            return self._generate_executive_summary_direct(insights, metrics)
+    
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _cached_generate_executive_summary(_self, cache_key: str, insights_dict: List[Dict], metrics: Dict[str, Any]) -> str:
+        """Cached version of executive summary generation"""
+        logger.info(f"Generating fresh executive summary (cache miss): {cache_key[:8]}...")
+        
+        # Convert dict back to InsightSummary objects
+        insights = []
+        for insight_dict in insights_dict:
+            insights.append(InsightSummary(
+                title=insight_dict['title'],
+                description=insight_dict['description'],
+                impact_level=insight_dict['impact_level'],
+                category=insight_dict['category'],
+                data_points=insight_dict['data_points'],
+                recommendations=insight_dict['recommendations'],
+                confidence_score=insight_dict['confidence_score'],
+                priority_rank=insight_dict['priority_rank']
+            ))
+        
+        # Generate summary using direct method
+        summary = _self._generate_executive_summary_direct(insights, metrics)
+        logger.info("Generated executive summary and cached it")
+        return summary
+    
+    def _get_cached_executive_summary(self, insights: List[InsightSummary], metrics: Dict[str, Any], force_refresh: bool = False) -> str:
+        """Get executive summary with caching"""
+        
+        # Create cache key
+        cache_key = self._create_cache_key(metrics)
+        
+        if force_refresh:
+            st.cache_data.clear()
+        
+        # Convert insights to dict for caching
+        insights_dict = []
+        for insight in insights:
+            insights_dict.append({
+                'title': insight.title,
+                'description': insight.description,
+                'impact_level': insight.impact_level,
+                'category': insight.category,
+                'data_points': insight.data_points,
+                'recommendations': insight.recommendations,
+                'confidence_score': insight.confidence_score,
+                'priority_rank': insight.priority_rank
+            })
+        
+        try:
+            return self._cached_generate_executive_summary(cache_key, insights_dict, metrics)
+        except Exception as e:
+            logger.error(f"Error getting cached summary: {e}")
+            return self._generate_executive_summary_direct(insights, metrics)
+    
+    def _generate_executive_summary_direct(self, insights: List[InsightSummary], metrics: Dict[str, Any]) -> str:
+        """Generate executive summary directly without caching (original method)"""
         
         # Try AI summary if available
         if self.is_ready:
@@ -571,3 +780,75 @@ def create_insights_generator(api_key: Optional[str] = None) -> GroqInsightsGene
         GroqInsightsGenerator instance
     """
     return GroqInsightsGenerator(api_key=api_key)
+
+# Utility functions for cache management
+def add_cache_controls():
+    """
+    Add cache control UI elements to the sidebar
+    Call this in your Streamlit pages to add cache management controls
+    """
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("**🧠 AI Insights Cache**")
+        
+        # Show cache status
+        cache_info = st.session_state.get('insights_cache_info', {})
+        if cache_info:
+            generated_at = cache_info.get('generated_at')
+            if generated_at:
+                time_ago = datetime.now() - generated_at
+                minutes_ago = int(time_ago.total_seconds() / 60)
+                st.caption(f"Last generated: {minutes_ago} min ago")
+        
+        # Cache control buttons
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("🔄 Refresh", help="Force refresh AI insights"):
+                st.session_state.force_refresh_insights = True
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear Cache", help="Clear all cached insights"):
+                st.cache_data.clear()
+                if 'insights_cache_info' in st.session_state:
+                    del st.session_state.insights_cache_info
+                st.success("Cache cleared!")
+                st.rerun()
+
+def get_insights_with_cache(metrics: Dict[str, Any],
+                           routes_df: pd.DataFrame = None,
+                           force_refresh: bool = False) -> Tuple[List[InsightSummary], str]:
+    """
+    Convenience function to get both insights and executive summary with caching
+    
+    Args:
+        metrics: Calculated metrics
+        routes_df: Routes dataframe (optional)
+        force_refresh: Force cache refresh
+        
+    Returns:
+        Tuple of (insights_list, executive_summary)
+    """
+    # Check if force refresh is requested from UI
+    ui_force_refresh = st.session_state.get('force_refresh_insights', False)
+    if ui_force_refresh:
+        force_refresh = True
+        st.session_state.force_refresh_insights = False
+    
+    # Generate insights
+    generator = create_insights_generator()
+    insights = generator.generate_comprehensive_insights(
+        metrics=metrics,
+        routes_df=routes_df,
+        force_refresh=force_refresh
+    )
+    
+    # Generate executive summary
+    executive_summary = generator.generate_executive_summary(
+        insights=insights,
+        metrics=metrics,
+        force_refresh=force_refresh
+    )
+    
+    return insights, executive_summary
