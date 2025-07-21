@@ -118,7 +118,7 @@ def render_overview_filters(routes_df, time_series_df):
                 time_series_df = time_series_df[mask]
         except Exception as e:
             logger.warning(f"Error applying date filter: {e}")
-                filters['date_range'] = None
+            filters['date_range'] = None
     
     # Route type filter
     if routes_df is not None and not routes_df.empty and 'route_type' in routes_df.columns:
