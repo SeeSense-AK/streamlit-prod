@@ -360,25 +360,19 @@ class DataProcessor:
     def load_dataset(_self, dataset_name: str, force_reload: bool = False) -> Tuple[Optional[pd.DataFrame], Dict[str, Any]]:
         """
         Load and process a dataset from CSV file with comprehensive data cleaning
-        
-        Args:
-            dataset_name: Name of the dataset to load
-            force_reload: Force reload from CSV even if cached
-            
-        Returns:
-            Tuple of (DataFrame or None, metadata)
+        BYPASSES the problematic clean_dataframe function from validators.py
         """
         if dataset_name not in _self.datasets:
             raise ValueError(f"Unknown dataset: {dataset_name}")
-        
+    
         # Check cache first (if not forcing reload)
         if not force_reload and _self._is_cache_valid(dataset_name):
             logger.info(f"Loading {dataset_name} from cache")
             return _self._data_cache[dataset_name]
-        
+    
         # Load from CSV
         csv_file = _self.raw_data_path / _self.datasets[dataset_name]
-        
+    
         if not csv_file.exists():
             logger.error(f"CSV file not found: {csv_file}")
             metadata = {
@@ -392,12 +386,12 @@ class DataProcessor:
                 'status': 'file_not_found'
             }
             return None, metadata
-        
+    
         try:
             # Load CSV with basic error handling
             logger.info(f"Loading CSV file: {csv_file}")
             df_raw = pd.read_csv(csv_file)
-            
+        
             if df_raw.empty:
                 logger.warning(f"Empty CSV file: {csv_file}")
                 metadata = {
@@ -411,21 +405,23 @@ class DataProcessor:
                     'status': 'empty_file'
                 }
                 return None, metadata
-            
+        
             logger.info(f"Raw CSV loaded: {len(df_raw)} rows, {len(df_raw.columns)} columns")
-            
+        
             # STEP 1: Standardize data types (THIS FIXES THE MAIN ISSUE)
             df_typed = _self.standardize_data_types(df_raw, dataset_name)
-            
-            # STEP 2: Apply data constraints
+            logger.info("Data type standardization completed")
+        
+            # STEP 2: Apply data constraints (our safe version)
             df_constrained = _self.apply_data_constraints(df_typed, dataset_name)
-            
+            logger.info("Data constraints applied")
+        
             # STEP 3: Remove completely empty rows
             df_clean = df_constrained.dropna(how='all')
-            
+        
             # STEP 4: Process dataset-specific features
             df_final = _self._process_dataset(df_clean, dataset_name)
-            
+        
             if df_final.empty:
                 logger.warning(f"No valid data remaining after cleaning for {dataset_name}")
                 metadata = {
@@ -439,14 +435,31 @@ class DataProcessor:
                     'status': 'empty_after_cleaning'
                 }
                 return None, metadata
-            
+        
+            # Basic validation check (just structure, not the problematic cleaning)
+            validation_warnings = []
+            validation_errors = []
+        
+            # Simple column checks without the problematic constraint validation
+            expected_columns = {
+                'routes': ['route_id', 'popularity_rating', 'start_lat', 'start_lon'],
+                'braking_hotspots': ['hotspot_id', 'lat', 'lon', 'intensity'],
+                'swerving_hotspots': ['hotspot_id', 'lat', 'lon', 'intensity'],
+                'time_series': ['date']
+            }
+        
+            required_cols = expected_columns.get(dataset_name, [])
+            missing_cols = [col for col in required_cols if col not in df_final.columns]
+            if missing_cols:
+                validation_warnings.append(f"Missing expected columns: {missing_cols}")
+        
             # Generate metadata
             metadata = {
                 'dataset_name': dataset_name,
                 'source_file': str(csv_file),
                 'load_timestamp': datetime.now(),
-                'validation_errors': [],
-                'validation_warnings': [],
+                'validation_errors': validation_errors,
+                'validation_warnings': validation_warnings,
                 'data_summary': {
                     'row_count': len(df_final),
                     'column_count': len(df_final.columns),
@@ -458,14 +471,16 @@ class DataProcessor:
                 'processing_info': _self._get_processing_info(df_final, dataset_name),
                 'status': 'success'
             }
-            
+        
             # Cache the results
             _self._data_cache[dataset_name] = (df_final, metadata)
             _self._cache_timestamps[dataset_name] = datetime.now()
-            
+        
             logger.info(f"Successfully loaded and cleaned {dataset_name}: {len(df_final)} rows")
+            logger.info(f"Final data types: {df_final.dtypes.to_dict()}")
+        
             return df_final, metadata
-            
+        
         except Exception as e:
             logger.error(f"Error loading {dataset_name}: {e}")
             metadata = {
