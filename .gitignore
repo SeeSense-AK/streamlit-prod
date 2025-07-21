@@ -44,3 +44,4 @@ venv/
 secrets/
 *.key
 *.secret
+.env
