@@ -698,39 +698,61 @@ def detect_safety_anomalies(time_series_df, contamination):
 
 
 def detect_geographic_anomalies(braking_df, swerving_df):
-    """Detect geographic anomalies in hotspots"""
+    """Detect geographic anomalies in hotspots - FIXED VERSION"""
     try:
         anomalies = []
         
-        # Check braking hotspots
+        # Check braking hotspots with safe comparison
         if braking_df is not None and len(braking_df) > 0:
             if 'severity_score' in braking_df.columns:
-                threshold = braking_df['severity_score'].quantile(0.9)
-                high_severity = braking_df[braking_df['severity_score'] > threshold]
+                # FIXED: Safe numeric conversion before quantile and comparison
+                severity_numeric = pd.to_numeric(braking_df['severity_score'], errors='coerce')
+                severity_clean = severity_numeric.dropna()
                 
-                for _, hotspot in high_severity.iterrows():
-                    anomalies.append({
-                        'lat': hotspot['lat'],
-                        'lon': hotspot['lon'],
-                        'severity': hotspot['severity_score'],
-                        'type': 'Braking',
-                        'description': f"High severity braking hotspot ({hotspot['severity_score']:.1f})"
-                    })
+                if not severity_clean.empty:
+                    threshold = severity_clean.quantile(0.9)
+                    
+                    # Create a temporary dataframe with numeric severity_score
+                    temp_braking = braking_df.copy()
+                    temp_braking['severity_score'] = severity_numeric
+                    temp_braking = temp_braking.dropna(subset=['severity_score'])
+                    
+                    high_severity = temp_braking[temp_braking['severity_score'] > threshold]
+                    
+                    for _, hotspot in high_severity.iterrows():
+                        anomalies.append({
+                            'lat': hotspot['lat'],
+                            'lon': hotspot['lon'],
+                            'severity': hotspot['severity_score'],
+                            'type': 'Braking',
+                            'description': f"High severity braking hotspot ({hotspot['severity_score']:.1f})"
+                        })
         
-        # Check swerving hotspots
+        # Check swerving hotspots with safe comparison
         if swerving_df is not None and len(swerving_df) > 0:
             if 'severity_score' in swerving_df.columns:
-                threshold = swerving_df['severity_score'].quantile(0.9)
-                high_severity = swerving_df[swerving_df['severity_score'] > threshold]
+                # FIXED: Safe numeric conversion before quantile and comparison
+                severity_numeric = pd.to_numeric(swerving_df['severity_score'], errors='coerce')
+                severity_clean = severity_numeric.dropna()
                 
-                for _, hotspot in high_severity.iterrows():
-                    anomalies.append({
-                        'lat': hotspot['lat'],
-                        'lon': hotspot['lon'], 
-                        'severity': hotspot['severity_score'],
-                        'type': 'Swerving',
-                        'description': f"High severity swerving hotspot ({hotspot['severity_score']:.1f})"
-                    })
+                if not severity_clean.empty:
+                    threshold = severity_clean.quantile(0.9)
+                    
+                    # Create a temporary dataframe with numeric severity_score
+                    temp_swerving = swerving_df.copy()
+                    temp_swerving['severity_score'] = severity_numeric
+                    temp_swerving = temp_swerving.dropna(subset=['severity_score'])
+                    
+                    high_severity = temp_swerving[temp_swerving['severity_score'] > threshold]
+                    
+                    for _, hotspot in high_severity.iterrows():
+                        anomalies.append({
+                            'lat': hotspot['lat'],
+                            'lon': hotspot['lon'], 
+                            'severity': hotspot['severity_score'],
+                            'type': 'Swerving',
+                            'description': f"High severity swerving hotspot ({hotspot['severity_score']:.1f})"
+                        })
         
         return anomalies
         
