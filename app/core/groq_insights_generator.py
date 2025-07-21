@@ -19,25 +19,42 @@ try:
 except ImportError:
     logging.info("python-dotenv not available, using system environment variables only")
 
-# Import Groq with error handling
+# Import Groq with comprehensive error handling
 GROQ_AVAILABLE = False
 GROQ_VERSION = None
+GROQ_CLIENT_CLASS = None
 
 try:
+    # Try the standard import first
     from groq import Groq
+    GROQ_CLIENT_CLASS = Groq
     GROQ_AVAILABLE = True
+    
     # Try to get version info
     try:
         import groq
         GROQ_VERSION = getattr(groq, '__version__', 'unknown')
     except:
         GROQ_VERSION = 'unknown'
+    
     logging.info(f"Groq library loaded successfully, version: {GROQ_VERSION}")
+    
 except ImportError as e:
     logging.warning(f"Groq library not available: {e}")
     logging.info("AI insights will not be available - falling back to rule-based insights")
 except Exception as e:
     logging.error(f"Error importing Groq: {e}")
+
+# Try alternative import methods if standard method failed
+if not GROQ_AVAILABLE:
+    try:
+        import groq
+        GROQ_CLIENT_CLASS = groq.Client
+        GROQ_AVAILABLE = True
+        GROQ_VERSION = getattr(groq, '__version__', 'unknown')
+        logging.info(f"Groq library loaded with alternative method, version: {GROQ_VERSION}")
+    except:
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -147,19 +164,38 @@ class GroqInsightsGenerator:
             self.logger.warning("No Groq API key found - AI insights will not be available")
             return False
         
-        # Initialize Groq client
-        try:
-            self._client = Groq(api_key=self._api_key)
-            self.logger.info("Groq client initialized successfully")
-            
-            # Test the connection
-            return self._test_connection()
-            
-        except Exception as e:
-            self.logger.error(f"Failed to initialize Groq client: {e}")
-            self._initialization_error = f"Client initialization failed: {str(e)}"
-            self._client = None
-            return False
+        # Initialize Groq client with multiple compatibility methods
+        initialization_methods = [
+            ("Standard Groq()", lambda: Groq(api_key=self._api_key)),
+            ("Groq with explicit params", lambda: Groq(api_key=self._api_key, timeout=30)),
+            ("groq.Client()", lambda: __import__('groq').Client(api_key=self._api_key)),
+            ("GROQ_CLIENT_CLASS", lambda: GROQ_CLIENT_CLASS(api_key=self._api_key) if GROQ_CLIENT_CLASS else None)
+        ]
+        
+        for method_name, method_func in initialization_methods:
+            try:
+                self.logger.debug(f"Trying {method_name}")
+                client = method_func()
+                if client is not None:
+                    self._client = client
+                    self.logger.info(f"Groq client initialized successfully with {method_name}")
+                    return self._test_connection()
+                    
+            except TypeError as e:
+                if "unexpected keyword argument" in str(e):
+                    self.logger.debug(f"{method_name} failed due to parameter mismatch: {e}")
+                    continue
+                else:
+                    self.logger.debug(f"{method_name} failed with TypeError: {e}")
+                    continue
+            except Exception as e:
+                self.logger.debug(f"{method_name} failed: {e}")
+                continue
+        
+        # All methods failed
+        self.logger.error("All Groq client initialization methods failed")
+        self._initialization_error = "All initialization methods failed - check Groq version compatibility"
+        return False
     
     def _test_connection(self) -> bool:
         """
