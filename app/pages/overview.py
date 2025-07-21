@@ -102,7 +102,7 @@ def render_no_data_message():
 
 
 def render_overview_filters(routes_df, time_series_df):
-    """Render sidebar filters for the overview page"""
+    """Render sidebar filters for the overview page with robust data handling"""
     st.sidebar.markdown("## 🔍 Filters")
     
     filters = {}
@@ -110,45 +110,76 @@ def render_overview_filters(routes_df, time_series_df):
     # Date range filter
     if time_series_df is not None and not time_series_df.empty:
         try:
-            min_date = pd.to_datetime(time_series_df['date']).min().date()
-            max_date = pd.to_datetime(time_series_df['date']).max().date()
+            # Convert date column to datetime with error handling
+            time_series_df['date'] = pd.to_datetime(time_series_df['date'], errors='coerce')
+            time_series_df = time_series_df.dropna(subset=['date'])
             
-            filters['date_range'] = st.sidebar.date_input(
-                "📅 Date Range",
-                value=(min_date, max_date),
-                min_value=min_date,
-                max_value=max_date,
-                key="overview_date_filter"
-            )
+            if not time_series_df.empty:
+                min_date = time_series_df['date'].min().date()
+                max_date = time_series_df['date'].max().date()
+                
+                filters['date_range'] = st.sidebar.date_input(
+                    "📅 Date Range",
+                    value=(min_date, max_date),
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="overview_date_filter"
+                )
+            else:
+                filters['date_range'] = None
         except Exception as e:
             logger.warning(f"Error setting up date filter: {e}")
             filters['date_range'] = None
     
     # Route type filter
     if routes_df is not None and not routes_df.empty and 'route_type' in routes_df.columns:
-        route_types = ['All'] + list(routes_df['route_type'].unique())
-        filters['route_type'] = st.sidebar.selectbox(
-            "🛣️ Route Type",
-            options=route_types,
-            key="overview_route_type_filter"
-        )
+        try:
+            # Get unique route types, handling any NaN values
+            unique_types = routes_df['route_type'].dropna().unique()
+            route_types = ['All'] + list(unique_types)
+            
+            filters['route_type'] = st.sidebar.selectbox(
+                "🛣️ Route Type",
+                options=route_types,
+                key="overview_route_type_filter"
+            )
+        except Exception as e:
+            logger.warning(f"Error setting up route type filter: {e}")
+            filters['route_type'] = 'All'
     
-    # Minimum popularity filter
+    # Minimum popularity filter with data validation
     if routes_df is not None and not routes_df.empty:
-        filters['min_popularity'] = st.sidebar.slider(
-            "📊 Minimum Route Popularity",
-            min_value=1,
-            max_value=10,
-            value=1,
-            help="Filter routes by minimum popularity rating",
-            key="overview_popularity_filter"
-        )
+        try:
+            if 'popularity_rating' in routes_df.columns:
+                # Convert to numeric and get valid range
+                numeric_popularity = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
+                numeric_popularity = numeric_popularity.dropna()
+                
+                if not numeric_popularity.empty:
+                    min_val = max(1, int(numeric_popularity.min()))
+                    max_val = min(10, int(numeric_popularity.max()))
+                    
+                    filters['min_popularity'] = st.sidebar.slider(
+                        "📊 Minimum Route Popularity",
+                        min_value=min_val,
+                        max_value=max_val,
+                        value=min_val,
+                        help="Filter routes by minimum popularity rating",
+                        key="overview_popularity_filter"
+                    )
+                else:
+                    filters['min_popularity'] = 1
+            else:
+                filters['min_popularity'] = 1
+        except Exception as e:
+            logger.warning(f"Error setting up popularity filter: {e}")
+            filters['min_popularity'] = 1
     
     return filters
 
 
 def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, filters):
-    """Apply filters to all dataframes"""
+    """Apply filters to all dataframes with proper data type handling"""
     
     # Apply date range filter to time series
     if time_series_df is not None and filters.get('date_range'):
@@ -164,14 +195,20 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
     # Apply route type filter
     if routes_df is not None and filters.get('route_type') and filters['route_type'] != 'All':
         try:
-            routes_df = routes_df[routes_df['route_type'] == filters['route_type']]
+            if 'route_type' in routes_df.columns:
+                routes_df = routes_df[routes_df['route_type'] == filters['route_type']]
         except Exception as e:
             logger.warning(f"Error applying route type filter: {e}")
     
-    # Apply popularity filter
+    # Apply popularity filter with proper data type handling
     if routes_df is not None and filters.get('min_popularity'):
         try:
             if 'popularity_rating' in routes_df.columns:
+                # Convert popularity_rating to numeric, handling any non-numeric values
+                routes_df['popularity_rating'] = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
+                
+                # Filter out NaN values and apply the minimum popularity filter
+                routes_df = routes_df.dropna(subset=['popularity_rating'])
                 routes_df = routes_df[routes_df['popularity_rating'] >= filters['min_popularity']]
         except Exception as e:
             logger.warning(f"Error applying popularity filter: {e}")
@@ -560,7 +597,7 @@ def render_trends_analysis(time_series_df):
 
 
 def render_recent_alerts(braking_df, swerving_df):
-    """Render recent safety alerts"""
+    """Render recent safety alerts with robust data handling"""
     st.markdown("### 🚨 Recent Safety Alerts")
     
     alerts = []
@@ -569,18 +606,26 @@ def render_recent_alerts(braking_df, swerving_df):
     if braking_df is not None and not braking_df.empty:
         try:
             if 'date_recorded' in braking_df.columns and 'intensity' in braking_df.columns:
-                recent_braking = braking_df[braking_df['intensity'] >= 8.0].copy()
-                recent_braking['date_recorded'] = pd.to_datetime(recent_braking['date_recorded'])
-                recent_braking = recent_braking.sort_values('date_recorded', ascending=False).head(5)
+                # Convert intensity to numeric
+                braking_df['intensity'] = pd.to_numeric(braking_df['intensity'], errors='coerce')
+                braking_df = braking_df.dropna(subset=['intensity'])
                 
-                for _, row in recent_braking.iterrows():
-                    alerts.append({
-                        'type': '🚨 High-Intensity Braking',
-                        'location': f"({row['lat']:.4f}, {row['lon']:.4f})",
-                        'intensity': row['intensity'],
-                        'date': row['date_recorded'].strftime('%Y-%m-%d'),
-                        'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
-                    })
+                if not braking_df.empty:
+                    recent_braking = braking_df[braking_df['intensity'] >= 8.0].copy()
+                    
+                    if not recent_braking.empty:
+                        recent_braking['date_recorded'] = pd.to_datetime(recent_braking['date_recorded'], errors='coerce')
+                        recent_braking = recent_braking.dropna(subset=['date_recorded'])
+                        recent_braking = recent_braking.sort_values('date_recorded', ascending=False).head(5)
+                        
+                        for _, row in recent_braking.iterrows():
+                            alerts.append({
+                                'type': '🚨 High-Intensity Braking',
+                                'location': f"({row['lat']:.4f}, {row['lon']:.4f})" if 'lat' in row and 'lon' in row else "Location unavailable",
+                                'intensity': row['intensity'],
+                                'date': row['date_recorded'].strftime('%Y-%m-%d') if pd.notnull(row['date_recorded']) else "Date unavailable",
+                                'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
+                            })
         except Exception as e:
             logger.warning(f"Error processing braking alerts: {e}")
     
@@ -588,18 +633,26 @@ def render_recent_alerts(braking_df, swerving_df):
     if swerving_df is not None and not swerving_df.empty:
         try:
             if 'date_recorded' in swerving_df.columns and 'intensity' in swerving_df.columns:
-                recent_swerving = swerving_df[swerving_df['intensity'] >= 8.0].copy()
-                recent_swerving['date_recorded'] = pd.to_datetime(recent_swerving['date_recorded'])
-                recent_swerving = recent_swerving.sort_values('date_recorded', ascending=False).head(5)
+                # Convert intensity to numeric
+                swerving_df['intensity'] = pd.to_numeric(swerving_df['intensity'], errors='coerce')
+                swerving_df = swerving_df.dropna(subset=['intensity'])
                 
-                for _, row in recent_swerving.iterrows():
-                    alerts.append({
-                        'type': '🌪️ High-Intensity Swerving',
-                        'location': f"({row['lat']:.4f}, {row['lon']:.4f})",
-                        'intensity': row['intensity'],
-                        'date': row['date_recorded'].strftime('%Y-%m-%d'),
-                        'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
-                    })
+                if not swerving_df.empty:
+                    recent_swerving = swerving_df[swerving_df['intensity'] >= 8.0].copy()
+                    
+                    if not recent_swerving.empty:
+                        recent_swerving['date_recorded'] = pd.to_datetime(recent_swerving['date_recorded'], errors='coerce')
+                        recent_swerving = recent_swerving.dropna(subset=['date_recorded'])
+                        recent_swerving = recent_swerving.sort_values('date_recorded', ascending=False).head(5)
+                        
+                        for _, row in recent_swerving.iterrows():
+                            alerts.append({
+                                'type': '🌪️ High-Intensity Swerving',
+                                'location': f"({row['lat']:.4f}, {row['lon']:.4f})" if 'lat' in row and 'lon' in row else "Location unavailable",
+                                'intensity': row['intensity'],
+                                'date': row['date_recorded'].strftime('%Y-%m-%d') if pd.notnull(row['date_recorded']) else "Date unavailable",
+                                'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
+                            })
         except Exception as e:
             logger.warning(f"Error processing swerving alerts: {e}")
     
@@ -607,7 +660,14 @@ def render_recent_alerts(braking_df, swerving_df):
     if alerts:
         # Sort by date and intensity
         alerts_df = pd.DataFrame(alerts)
-        alerts_df = alerts_df.sort_values(['date', 'intensity'], ascending=[False, False])
+        
+        # Handle date sorting safely
+        try:
+            alerts_df['date_for_sort'] = pd.to_datetime(alerts_df['date'], errors='coerce')
+            alerts_df = alerts_df.sort_values(['date_for_sort', 'intensity'], ascending=[False, False], na_position='last')
+        except:
+            # Fallback to intensity-only sorting
+            alerts_df = alerts_df.sort_values('intensity', ascending=False)
         
         for _, alert in alerts_df.head(10).iterrows():
             severity_color = "🔴" if alert['severity'] == 'High' else "🟡"
