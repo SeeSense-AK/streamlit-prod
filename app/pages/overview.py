@@ -161,10 +161,10 @@ def render_overview_filters(routes_df, time_series_df):
                     
                     filters['min_popularity'] = st.sidebar.slider(
                         "📊 Minimum Route Popularity",
-                        min_value=min_val,
-                        max_value=max_val,
-                        value=min_val,
-                        help="Filter routes by minimum popularity rating",
+                        min_value=int(min_val),    # Ensure int
+                        max_value=int(max_val),    # Ensure int  
+                        value=int(min_val),        # Ensure int
+                        step=1,                    # Add step to force integer
                         key="overview_popularity_filter"
                     )
                 else:
