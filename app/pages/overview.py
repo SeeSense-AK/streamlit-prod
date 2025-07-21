@@ -204,14 +204,13 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
     if routes_df is not None and filters.get('min_popularity'):
         try:
             if 'popularity_rating' in routes_df.columns:
-                # Convert popularity_rating to numeric, handling any non-numeric values
+                # FIXED: Convert popularity_rating to numeric, handling any non-numeric values
                 routes_df['popularity_rating'] = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
-                
-                # Filter out NaN values and apply the minimum popularity filter
                 routes_df = routes_df.dropna(subset=['popularity_rating'])
                 routes_df = routes_df[routes_df['popularity_rating'] >= filters['min_popularity']]
         except Exception as e:
             logger.warning(f"Error applying popularity filter: {e}")
+    
     
     return routes_df, braking_df, swerving_df, time_series_df
 
