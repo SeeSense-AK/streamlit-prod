@@ -1,5 +1,6 @@
 """
-Updated Overview Page for SeeSense Dashboard
+Updated Overview Page for SeeSense Dashboard - WITH CACHING
+Complete rewrite implementing the cached AI insights system
 """
 import streamlit as st
 import pandas as pd
@@ -17,13 +18,15 @@ from app.utils.config import config
 
 # Import our new data-driven calculators
 from app.core.metrics_calculator import metrics_calculator
-from app.core.groq_insights_generator import create_insights_generator
+
+# UPDATED IMPORTS - Using cached insights system
+from app.core.groq_insights_generator import add_cache_controls, get_insights_with_cache
 
 logger = logging.getLogger(__name__)
 
 
 def render_overview_page():
-    """Render the main overview page with real data-driven metrics"""
+    """Render the main overview page with real data-driven metrics and cached AI insights"""
     st.title("📊 Dashboard Overview")
     st.markdown("Real-time insights into cycling safety across your network")
     
@@ -57,7 +60,10 @@ def render_overview_page():
         
         # Render main overview sections
         render_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
-        render_ai_insights_section(routes_df, braking_df, swerving_df, time_series_df)
+        
+        # UPDATED: Use cached AI insights instead of the old method
+        render_ai_insights_section_cached(routes_df, braking_df, swerving_df, time_series_df)
+        
         render_safety_maps(braking_df, swerving_df, routes_df)
         render_trends_analysis(time_series_df)
         render_recent_alerts(braking_df, swerving_df)
@@ -76,66 +82,67 @@ def render_overview_page():
 def render_no_data_message():
     """Render message when no data is available"""
     st.warning("⚠️ No data available for the overview dashboard.")
-    st.markdown("""
-    To use the overview dashboard, you need to:
-    1. **Add your data files** to the `data/raw/` directory
-    2. **Go to the Data Setup page** to validate your files
-    3. **Refresh this page** after adding your data
     
-    Required files:
-    - `routes.csv` - Route data with popularity metrics
-    - `braking_hotspots.csv` - Sudden braking incident locations
-    - `swerving_hotspots.csv` - Swerving incident locations
-    - `time_series.csv` - Daily aggregated cycling data
+    st.markdown("""
+    ### Getting Started
+    
+    1. **Upload your data files** to the `data/raw/` directory
+    2. **Use the Data Setup page** to validate and load your data
+    3. **Return to this overview** to see your cycling safety insights
+    
+    **Required files:**
+    - `routes.csv` - Route popularity and safety data
+    - `braking_hotspots.csv` - Emergency braking locations
+    - `swerving_hotspots.csv` - Swerving incident locations  
+    - `time_series.csv` - Daily cycling activity data
     """)
+    
+    if st.button("📊 Go to Data Setup", type="primary"):
+        st.switch_page("data_setup")
 
 
 def render_overview_filters(routes_df, time_series_df):
-    """Render sidebar filters for overview page"""
-    st.sidebar.markdown("### 🔍 Filters")
+    """Render sidebar filters for the overview page"""
+    st.sidebar.markdown("## 🔍 Filters")
     
     filters = {}
     
     # Date range filter
-    if time_series_df is not None and 'date' in time_series_df.columns:
-        time_series_df['date'] = pd.to_datetime(time_series_df['date'])
-        min_date = time_series_df['date'].min().date()
-        max_date = time_series_df['date'].max().date()
-        
-        filters['date_range'] = st.sidebar.date_input(
-            "Date Range",
-            value=(min_date, max_date),
-            min_value=min_date,
-            max_value=max_date,
-            key="overview_date_range"
-        )
+    if time_series_df is not None and not time_series_df.empty:
+        try:
+            min_date = pd.to_datetime(time_series_df['date']).min().date()
+            max_date = pd.to_datetime(time_series_df['date']).max().date()
+            
+            filters['date_range'] = st.sidebar.date_input(
+                "📅 Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="overview_date_filter"
+            )
+        except Exception as e:
+            logger.warning(f"Error setting up date filter: {e}")
+            filters['date_range'] = None
     
     # Route type filter
-    if routes_df is not None and 'route_type' in routes_df.columns:
-        route_types = ['All'] + sorted(routes_df['route_type'].unique().tolist())
+    if routes_df is not None and not routes_df.empty and 'route_type' in routes_df.columns:
+        route_types = ['All'] + list(routes_df['route_type'].unique())
         filters['route_type'] = st.sidebar.selectbox(
-            "Route Type",
-            route_types,
-            key="overview_route_type"
+            "🛣️ Route Type",
+            options=route_types,
+            key="overview_route_type_filter"
         )
     
-    # Infrastructure filter
-    if routes_df is not None and 'has_bike_lane' in routes_df.columns:
-        filters['infrastructure'] = st.sidebar.selectbox(
-            "Infrastructure",
-            ['All', 'With Bike Lane', 'Without Bike Lane'],
-            key="overview_infrastructure"
+    # Minimum popularity filter
+    if routes_df is not None and not routes_df.empty:
+        filters['min_popularity'] = st.sidebar.slider(
+            "📊 Minimum Route Popularity",
+            min_value=1,
+            max_value=10,
+            value=1,
+            help="Filter routes by minimum popularity rating",
+            key="overview_popularity_filter"
         )
-    
-    # Severity threshold for hotspots
-    filters['severity_threshold'] = st.sidebar.slider(
-        "Min Severity Score",
-        min_value=0.0,
-        max_value=10.0,
-        value=0.0,
-        step=0.1,
-        key="overview_severity"
-    )
     
     return filters
 
@@ -144,614 +151,412 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
     """Apply filters to all dataframes"""
     
     # Apply date range filter to time series
-    if time_series_df is not None and 'date_range' in filters:
-        date_range = filters['date_range']
-        if isinstance(date_range, tuple) and len(date_range) == 2:
-            start_date, end_date = date_range
-            time_series_df = time_series_df[
-                (time_series_df['date'].dt.date >= start_date) & 
-                (time_series_df['date'].dt.date <= end_date)
-            ]
+    if time_series_df is not None and filters.get('date_range'):
+        try:
+            if isinstance(filters['date_range'], (list, tuple)) and len(filters['date_range']) == 2:
+                start_date, end_date = filters['date_range']
+                time_series_df['date'] = pd.to_datetime(time_series_df['date'])
+                mask = (time_series_df['date'].dt.date >= start_date) & (time_series_df['date'].dt.date <= end_date)
+                time_series_df = time_series_df[mask]
+        except Exception as e:
+            logger.warning(f"Error applying date filter: {e}")
     
     # Apply route type filter
-    if routes_df is not None and 'route_type' in filters:
-        route_type = filters['route_type']
-        if route_type != 'All':
-            routes_df = routes_df[routes_df['route_type'] == route_type]
+    if routes_df is not None and filters.get('route_type') and filters['route_type'] != 'All':
+        try:
+            routes_df = routes_df[routes_df['route_type'] == filters['route_type']]
+        except Exception as e:
+            logger.warning(f"Error applying route type filter: {e}")
     
-    # Apply infrastructure filter
-    if routes_df is not None and 'infrastructure' in filters:
-        infrastructure = filters['infrastructure']
-        if infrastructure == 'With Bike Lane':
-            routes_df = routes_df[routes_df['has_bike_lane'] == True]
-        elif infrastructure == 'Without Bike Lane':
-            routes_df = routes_df[routes_df['has_bike_lane'] == False]
-    
-    # Apply severity threshold
-    severity_threshold = filters.get('severity_threshold', 0)
-    
-    if braking_df is not None and 'severity_score' in braking_df.columns:
-        braking_df = braking_df[braking_df['severity_score'] >= severity_threshold]
-    
-    if swerving_df is not None and 'severity_score' in swerving_df.columns:
-        swerving_df = swerving_df[swerving_df['severity_score'] >= severity_threshold]
+    # Apply popularity filter
+    if routes_df is not None and filters.get('min_popularity'):
+        try:
+            if 'popularity_rating' in routes_df.columns:
+                routes_df = routes_df[routes_df['popularity_rating'] >= filters['min_popularity']]
+        except Exception as e:
+            logger.warning(f"Error applying popularity filter: {e}")
     
     return routes_df, braking_df, swerving_df, time_series_df
 
 
 def render_key_metrics(routes_df, braking_df, swerving_df, time_series_df):
-    """Render key performance metrics with real data-driven calculations"""
-    st.markdown("### 📈 Key Safety Metrics")
+    """Render key performance metrics cards"""
+    st.markdown("### 📊 Key Performance Metrics")
     
-    # Calculate metrics using our new data-driven calculator
-    metrics = calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
+    # Calculate metrics using the metrics calculator
+    metrics = metrics_calculator.calculate_all_overview_metrics(
+        routes_df, braking_df, swerving_df, time_series_df
+    )
     
-    # Display metrics in columns
+    # Create metrics columns
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
+        safety_score = metrics.get('safety_score', 0)
+        safety_delta = metrics.get('safety_delta', 0)
+        delta_color = "normal" if safety_delta >= 0 else "inverse"
+        
         st.metric(
-            label="Total Routes Analyzed",
-            value=f"{metrics['total_routes']:,}",
-            delta=metrics.get('routes_delta', 'N/A')
+            label="🛡️ Safety Score",
+            value=f"{safety_score:.1f}/10",
+            delta=f"{safety_delta:+.1f}" if safety_delta != 0 else None,
+            delta_color=delta_color
         )
     
     with col2:
+        total_routes = metrics.get('total_routes', 0)
         st.metric(
-            label="Active Hotspots",
-            value=f"{metrics['total_hotspots']:,}",
-            delta=metrics.get('hotspots_delta', 'N/A')
+            label="🛣️ Active Routes", 
+            value=f"{total_routes:,}"
         )
     
     with col3:
+        daily_rides = metrics.get('avg_daily_rides', 0)
+        rides_delta = metrics.get('rides_delta', 0)
+        
         st.metric(
-            label="Safety Score",
-            value=f"{metrics['safety_score']:.1f}/10",
-            delta=metrics.get('safety_delta', 'N/A')
+            label="🚴 Daily Rides",
+            value=f"{daily_rides:,}",
+            delta=f"{rides_delta:+,}" if rides_delta != 0 else None
         )
     
     with col4:
+        infrastructure_coverage = metrics.get('infrastructure_coverage', 0)
+        
         st.metric(
-            label="Incident Rate",
-            value=f"{metrics['incident_rate']:.1f}/1000",
-            delta=metrics.get('incident_delta', 'N/A'),
-            help="Incidents per 1000 rides"
+            label="🏗️ Infrastructure Coverage",
+            value=f"{infrastructure_coverage:.1f}%"
         )
     
-    # Additional metrics row
+    # Additional metrics in a second row
     col5, col6, col7, col8 = st.columns(4)
     
     with col5:
+        total_incidents = metrics.get('total_incidents', 0)
         st.metric(
-            label="Total Cyclists",
-            value=f"{metrics['total_cyclists']:,}",
-            delta=metrics.get('cyclists_delta', 'N/A')
+            label="⚠️ Total Incidents",
+            value=f"{total_incidents:,}"
         )
     
     with col6:
+        incident_rate = metrics.get('incident_rate', 0)
         st.metric(
-            label="Avg Daily Rides",
-            value=f"{metrics['avg_daily_rides']:,}",
-            delta=metrics.get('rides_delta', 'N/A')
+            label="📉 Incident Rate",
+            value=f"{incident_rate:.2f}/1000 rides"
         )
     
     with col7:
+        high_risk_routes = metrics.get('high_risk_routes', 0)
         st.metric(
-            label="High-Risk Areas",
-            value=f"{metrics['high_risk_areas']:,}",
-            delta=metrics.get('risk_delta', 'N/A')
+            label="🚨 High Risk Routes",
+            value=f"{high_risk_routes:,}"
         )
     
     with col8:
-        st.metric(
-            label="Infrastructure Coverage",
-            value=f"{metrics['infrastructure_coverage']:.1f}%",
-            delta=metrics.get('infrastructure_delta', 'N/A')
-        )
+        avg_response_time = metrics.get('avg_response_time', 0)
+        if avg_response_time > 0:
+            st.metric(
+                label="⏱️ Avg Response Time",
+                value=f"{avg_response_time:.1f}h"
+            )
+        else:
+            st.metric(
+                label="📊 Network Efficiency",
+                value=f"{metrics.get('network_efficiency', 0):.1f}%"
+            )
 
 
-def calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df):
-    """Calculate all key metrics using real data-driven calculations"""
-    return metrics_calculator.calculate_all_overview_metrics(
-        routes_df, braking_df, swerving_df, time_series_df
-    )
-
-
-def render_ai_insights_section(routes_df, braking_df, swerving_df, time_series_df):
-    """Render AI-powered insights section"""
+def render_ai_insights_section_cached(routes_df, braking_df, swerving_df, time_series_df):
+    """Render AI insights section WITH CACHING - This is the new cached version"""
     st.markdown("### 🧠 AI-Powered Insights")
     
+    # ADD CACHE CONTROLS - This adds the refresh and clear cache buttons to the sidebar
+    add_cache_controls()
+    
+    # Calculate metrics for the AI insights
+    metrics = metrics_calculator.calculate_all_overview_metrics(
+        routes_df, braking_df, swerving_df, time_series_df
+    )
+    
     try:
-        # Calculate metrics
-        metrics = calculate_key_metrics(routes_df, braking_df, swerving_df, time_series_df)
-        
-        # Generate insights
-        insights_generator = create_insights_generator()
-        insights = insights_generator.generate_comprehensive_insights(
-            metrics, routes_df, None, time_series_df
+        # CACHED INSIGHTS - This replaces the old create_insights_generator() approach
+        insights, executive_summary = get_insights_with_cache(
+            metrics=metrics, 
+            routes_df=routes_df
         )
         
-        # Generate executive summary
-        executive_summary = insights_generator.generate_executive_summary(
-            insights, metrics
-        )
-        
-        # Display executive summary
-        st.markdown("#### 🎯 Executive Summary")
-        st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 20px;
-            border-radius: 12px;
-            margin-bottom: 24px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-        ">
-            <div style="font-size: 16px; line-height: 1.6; white-space: pre-line;">
-                {executive_summary}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # Display insights
-        if insights:
-            st.markdown("#### 🔍 Key Insights")
+        if insights and executive_summary:
+            # Display executive summary
+            st.markdown("#### 📋 Executive Summary")
+            st.info(executive_summary)
             
-            # Create tabs for different insight categories
-            insight_categories = {}
-            for insight in insights:
-                category = insight.category
-                if category not in insight_categories:
-                    insight_categories[category] = []
-                insight_categories[category].append(insight)
+            # Display insights grouped by priority
+            st.markdown("#### 🎯 Key Insights")
             
-            # Create tabs
-            tab_names = list(insight_categories.keys())
-            if tab_names:
-                tabs = st.tabs([f"🔍 {name}" for name in tab_names])
-                
-                for tab, category in zip(tabs, tab_names):
-                    with tab:
-                        category_insights = insight_categories[category]
-                        
-                        for insight in category_insights:
-                            # Impact level color coding
-                            impact_colors = {
-                                'High': '#dc3545',
-                                'Medium': '#ffc107',
-                                'Low': '#28a745'
-                            }
-                            
-                            impact_color = impact_colors.get(insight.impact_level, '#6c757d')
-                            
-                            # Create insight card
-                            st.markdown(f"""
-                            <div style="
-                                border-left: 4px solid {impact_color};
-                                padding: 16px;
-                                margin: 16px 0;
-                                background-color: #f8f9fa;
-                                border-radius: 0 8px 8px 0;
-                            ">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                                    <h4 style="margin: 0; color: #333;">{insight.title}</h4>
-                                    <span style="
-                                        background-color: {impact_color};
-                                        color: white;
-                                        padding: 2px 8px;
-                                        border-radius: 12px;
-                                        font-size: 12px;
-                                        font-weight: bold;
-                                    ">{insight.impact_level} Impact</span>
-                                </div>
-                                <p style="margin: 8px 0; color: #555; line-height: 1.5;">{insight.description}</p>
+            # Group insights by impact level
+            high_impact = [i for i in insights if i.impact_level == 'High']
+            medium_impact = [i for i in insights if i.impact_level == 'Medium']
+            low_impact = [i for i in insights if i.impact_level == 'Low']
+            
+            # Display high impact insights with prominent styling
+            if high_impact:
+                st.markdown("**🔴 High Priority Issues**")
+                for insight in high_impact:
+                    # Color coding for impact levels
+                    impact_color = "#d32f2f"  # Red for high impact
+                    
+                    with st.expander(f"🚨 {insight.title}", expanded=True):
+                        # Custom styled content
+                        st.markdown(f"""
+                        <div style="
+                            padding: 16px;
+                            border-left: 4px solid {impact_color};
+                            background-color: #fef7f7;
+                            border-radius: 0 8px 8px 0;
+                            margin-bottom: 16px;
+                        ">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <h4 style="margin: 0; color: #333;">{insight.title}</h4>
+                                <span style="
+                                    background-color: {impact_color};
+                                    color: white;
+                                    padding: 4px 12px;
+                                    border-radius: 16px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                ">{insight.impact_level} Impact</span>
                             </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Show data points and recommendations
-                            col1, col2 = st.columns([1, 1])
-                            
-                            with col1:
-                                if insight.data_points:
-                                    st.markdown("**📊 Key Data Points:**")
-                                    for point in insight.data_points:
-                                        st.markdown(f"• {point}")
-                            
-                            with col2:
-                                if insight.recommendations:
-                                    st.markdown("**💡 Recommendations:**")
-                                    for rec in insight.recommendations:
-                                        st.markdown(f"• {rec}")
-                            
-                            # Confidence score
-                            st.markdown(f"*Confidence Score: {insight.confidence_score:.0%}*")
-                            st.markdown("---")
-            else:
-                st.info("No insights available for current data filters.")
+                            <p style="margin: 8px 0; color: #555; line-height: 1.6; font-size: 14px;">{insight.description}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Show recommendations
+                        if insight.recommendations:
+                            st.markdown("**🎯 Immediate Actions:**")
+                            for rec in insight.recommendations:
+                                st.markdown(f"• {rec}")
+                        
+                        # Show data points
+                        if insight.data_points:
+                            st.markdown("**📊 Supporting Data:**")
+                            for point in insight.data_points:
+                                st.markdown(f"• {point}")
+                        
+                        # Show confidence score
+                        confidence = insight.confidence_score
+                        st.markdown(f"*Confidence: {confidence:.0%}*")
+            
+            # Display medium impact insights
+            if medium_impact:
+                st.markdown("**🟡 Medium Priority Opportunities**")
+                for insight in medium_impact:
+                    impact_color = "#f57c00"  # Orange for medium impact
+                    
+                    with st.expander(f"⚡ {insight.title}"):
+                        st.markdown(f"""
+                        <div style="
+                            padding: 16px;
+                            border-left: 4px solid {impact_color};
+                            background-color: #fff8f0;
+                            border-radius: 0 8px 8px 0;
+                            margin-bottom: 16px;
+                        ">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <h4 style="margin: 0; color: #333;">{insight.title}</h4>
+                                <span style="
+                                    background-color: {impact_color};
+                                    color: white;
+                                    padding: 4px 12px;
+                                    border-radius: 16px;
+                                    font-size: 12px;
+                                    font-weight: bold;
+                                ">{insight.impact_level} Impact</span>
+                            </div>
+                            <p style="margin: 8px 0; color: #555; line-height: 1.6; font-size: 14px;">{insight.description}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Show recommendations and data
+                        col1, col2 = st.columns([1, 1])
+                        
+                        with col1:
+                            if insight.recommendations:
+                                st.markdown("**💡 Recommendations:**")
+                                for rec in insight.recommendations:
+                                    st.markdown(f"• {rec}")
+                        
+                        with col2:
+                            if insight.data_points:
+                                st.markdown("**📊 Key Data:**")
+                                for point in insight.data_points:
+                                    st.markdown(f"• {point}")
+                        
+                        st.markdown(f"*Confidence: {insight.confidence_score:.0%}*")
+            
+            # Display low impact insights (collapsed by default)
+            if low_impact:
+                with st.expander("🟢 Additional Insights (Low Priority)"):
+                    for insight in low_impact:
+                        st.markdown(f"**{insight.title}**: {insight.description}")
+                        if insight.recommendations:
+                            st.markdown(f"*Recommendation: {insight.recommendations[0]}*")
+                        st.markdown("---")
+        
         else:
-            st.info("No insights available. Please check your data quality.")
+            st.info("No AI insights available for current data. Please ensure you have sufficient data and a valid API configuration.")
             
     except Exception as e:
         logger.error(f"Error generating AI insights: {e}")
-        st.error("⚠️ Error generating AI insights. Please try again.")
+        st.error("⚠️ Error generating AI insights")
         st.info("AI insights are temporarily unavailable. The dashboard will continue to work with basic metrics.")
+        
+        # Show error details for debugging
+        with st.expander("🔍 Error Details (for debugging)"):
+            st.code(str(e))
 
 
 def render_safety_maps(braking_df, swerving_df, routes_df):
     """Render safety hotspot maps"""
     st.markdown("### 🗺️ Safety Hotspot Maps")
     
-    # Create map tabs
-    map_tab1, map_tab2, map_tab3 = st.tabs(["🛑 Braking Hotspots", "↔️ Swerving Hotspots", "🛣️ Route Popularity"])
-    
-    with map_tab1:
-        if braking_df is not None and len(braking_df) > 0:
-            render_braking_map(braking_df)
-        else:
-            st.info("No braking hotspot data available")
-    
-    with map_tab2:
-        if swerving_df is not None and len(swerving_df) > 0:
-            render_swerving_map(swerving_df)
-        else:
-            st.info("No swerving hotspot data available")
-    
-    with map_tab3:
-        if routes_df is not None and len(routes_df) > 0:
-            render_route_popularity_map(routes_df)
-        else:
-            st.info("No route data available")
-
-
-def render_braking_map(braking_df):
-    """Render braking hotspots map"""
-    st.markdown("**Sudden braking incident locations**")
-    
-    # Map controls
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        map_style = st.selectbox(
-            "Map Style",
-            ["carto-positron", "open-street-map", "carto-darkmatter"],
-            key="braking_map_style"
-        )
-        
-        show_severity = st.checkbox("Color by Severity", value=True, key="braking_severity")
-    
-    with col1:
-        # Create the map
-        if show_severity and 'severity_score' in braking_df.columns:
-            fig = px.scatter_mapbox(
-                braking_df,
-                lat="lat",
-                lon="lon",
-                size="incidents_count",
-                color="severity_score",
-                color_continuous_scale="Reds",
-                size_max=20,
-                zoom=12,
-                mapbox_style=map_style,
-                hover_name="hotspot_id",
-                hover_data={
-                    "incidents_count": True,
-                    "severity_score": ":.1f",
-                    "road_type": True
-                },
-                title="Braking Hotspots by Severity"
-            )
-        else:
-            fig = px.scatter_mapbox(
-                braking_df,
-                lat="lat",
-                lon="lon",
-                size="incidents_count",
-                color_discrete_sequence=["red"],
-                size_max=20,
-                zoom=12,
-                mapbox_style=map_style,
-                hover_name="hotspot_id",
-                hover_data={
-                    "incidents_count": True,
-                    "road_type": True
-                },
-                title="Braking Hotspots"
-            )
-        
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
-
-
-def render_swerving_map(swerving_df):
-    """Render swerving hotspots map"""
-    st.markdown("**Swerving incident locations**")
-    
-    # Map controls
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        map_style = st.selectbox(
-            "Map Style",
-            ["carto-positron", "open-street-map", "carto-darkmatter"],
-            key="swerving_map_style"
-        )
-        
-        show_severity = st.checkbox("Color by Severity", value=True, key="swerving_severity")
-    
-    with col1:
-        # Create the map
-        if show_severity and 'severity_score' in swerving_df.columns:
-            fig = px.scatter_mapbox(
-                swerving_df,
-                lat="lat",
-                lon="lon",
-                size="incidents_count",
-                color="severity_score",
-                color_continuous_scale="Oranges",
-                size_max=20,
-                zoom=12,
-                mapbox_style=map_style,
-                hover_name="hotspot_id",
-                hover_data={
-                    "incidents_count": True,
-                    "severity_score": ":.1f",
-                    "road_type": True
-                },
-                title="Swerving Hotspots by Severity"
-            )
-        else:
-            fig = px.scatter_mapbox(
-                swerving_df,
-                lat="lat",
-                lon="lon",
-                size="incidents_count",
-                color_discrete_sequence=["orange"],
-                size_max=20,
-                zoom=12,
-                mapbox_style=map_style,
-                hover_name="hotspot_id",
-                hover_data={
-                    "incidents_count": True,
-                    "road_type": True
-                },
-                title="Swerving Hotspots"
-            )
-        
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
-
-
-def render_route_popularity_map(routes_df):
-    """Render route popularity map"""
-    st.markdown("**Route popularity and usage patterns**")
-    
-    # Map controls
-    col1, col2 = st.columns([3, 1])
-    
-    with col2:
-        map_style = st.selectbox(
-            "Map Style",
-            ["carto-positron", "open-street-map", "carto-darkmatter"],
-            key="routes_map_style"
-        )
-        
-        color_by = st.selectbox(
-            "Color By",
-            ["popularity_rating", "distinct_cyclists", "route_type"],
-            key="routes_color_by"
-        )
-    
-    with col1:
-        # Create route lines or points
-        if 'start_lat' in routes_df.columns and 'start_lon' in routes_df.columns:
-            # Use starting points for routes
-            fig = px.scatter_mapbox(
-                routes_df,
-                lat="start_lat",
-                lon="start_lon",
-                size="distinct_cyclists",
-                color=color_by,
-                size_max=15,
-                zoom=11,
-                mapbox_style=map_style,
-                hover_name="route_id",
-                hover_data={
-                    "distinct_cyclists": True,
-                    "popularity_rating": True,
-                    "route_type": True,
-                    "has_bike_lane": True
-                },
-                title="Route Popularity"
-            )
-            
-            fig.update_layout(height=500)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Route location data not available for mapping")
-
-
-def render_trends_analysis(time_series_df):
-    """Render trends analysis with real data"""
-    st.markdown("### 📈 Trends Analysis")
-    
-    if time_series_df is None or len(time_series_df) == 0:
-        st.info("No time series data available for trends analysis")
-        return
-    
-    # Create trend tabs
-    trend_tab1, trend_tab2, trend_tab3 = st.tabs(["📊 Daily Trends", "📅 Weekly Patterns", "🌤️ Weather Impact"])
-    
-    with trend_tab1:
-        render_daily_trends(time_series_df)
-    
-    with trend_tab2:
-        render_weekly_patterns(time_series_df)
-    
-    with trend_tab3:
-        render_weather_impact(time_series_df)
-
-
-def render_daily_trends(time_series_df):
-    """Render daily trends analysis"""
-    st.markdown("**Daily cycling safety trends**")
-    
-    # Ensure date column is datetime
-    time_series_df['date'] = pd.to_datetime(time_series_df['date'])
-    
-    # Create subplots
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Daily Incidents', 'Safety Score Trend', 'Total Rides', 'Incident Rate'),
-        vertical_spacing=0.1,
-        horizontal_spacing=0.1
-    )
-    
-    # Daily incidents
-    if 'incidents' in time_series_df.columns:
-        fig.add_trace(
-            go.Scatter(x=time_series_df['date'], y=time_series_df['incidents'], 
-                      name='Incidents', line=dict(color='red')),
-            row=1, col=1
-        )
-    
-    # Safety score trend
-    if 'safety_score' in time_series_df.columns:
-        fig.add_trace(
-            go.Scatter(x=time_series_df['date'], y=time_series_df['safety_score'], 
-                      name='Safety Score', line=dict(color='green')),
-            row=1, col=2
-        )
-    
-    # Total rides
-    if 'total_rides' in time_series_df.columns:
-        fig.add_trace(
-            go.Scatter(x=time_series_df['date'], y=time_series_df['total_rides'], 
-                      name='Total Rides', line=dict(color='blue')),
-            row=2, col=1
-        )
-    
-    # Incident rate
-    if 'incident_rate' in time_series_df.columns:
-        fig.add_trace(
-            go.Scatter(x=time_series_df['date'], y=time_series_df['incident_rate'], 
-                      name='Incident Rate', line=dict(color='orange')),
-            row=2, col=2
-        )
-    
-    fig.update_layout(
-        height=500,
-        title_text="Daily Safety Trends",
-        showlegend=False
-    )
-    
-    # Update y-axis titles
-    fig.update_yaxes(title_text="Count", row=1, col=1)
-    fig.update_yaxes(title_text="Score", row=1, col=2)
-    fig.update_yaxes(title_text="Count", row=2, col=1)
-    fig.update_yaxes(title_text="Rate", row=2, col=2)
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_weekly_patterns(time_series_df):
-    """Render weekly patterns analysis"""
-    st.markdown("**Weekly patterns in cycling safety**")
-    
-    # Calculate weekly averages
-    if 'day_of_week' not in time_series_df.columns:
-        time_series_df['day_of_week'] = pd.to_datetime(time_series_df['date']).dt.day_name()
-    
-    weekly_data = time_series_df.groupby('day_of_week').agg({
-        'incidents': 'mean',
-        'total_rides': 'mean',
-        'safety_score': 'mean',
-        'incident_rate': 'mean'
-    }).round(2)
-    
-    # Ensure proper day order
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    weekly_data = weekly_data.reindex([day for day in day_order if day in weekly_data.index])
-    
-    # Create chart
-    fig = make_subplots(
-        rows=2, cols=2,
-        subplot_titles=('Average Daily Incidents', 'Average Daily Rides', 'Safety Score by Day', 'Incident Rate by Day'),
-        vertical_spacing=0.1,
-        horizontal_spacing=0.1
-    )
-    
-    # Incidents by day
-    if 'incidents' in weekly_data.columns:
-        fig.add_trace(
-            go.Bar(x=weekly_data.index, y=weekly_data['incidents'], name='Incidents', marker_color='red'),
-            row=1, col=1
-        )
-    
-    # Rides by day
-    if 'total_rides' in weekly_data.columns:
-        fig.add_trace(
-            go.Bar(x=weekly_data.index, y=weekly_data['total_rides'], name='Total Rides', marker_color='blue'),
-            row=1, col=2
-        )
-    
-    # Safety score by day
-    if 'safety_score' in weekly_data.columns:
-        fig.add_trace(
-            go.Bar(x=weekly_data.index, y=weekly_data['safety_score'], name='Safety Score', marker_color='green'),
-            row=2, col=1
-        )
-    
-    # Incident rate by day
-    if 'incident_rate' in weekly_data.columns:
-        fig.add_trace(
-            go.Bar(x=weekly_data.index, y=weekly_data['incident_rate'], name='Incident Rate', marker_color='orange'),
-            row=2, col=2
-        )
-    
-    fig.update_layout(
-        height=500,
-        title_text="Weekly Safety Patterns",
-        showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-
-
-def render_weather_impact(time_series_df):
-    """Render weather impact analysis"""
-    st.markdown("**Impact of weather conditions on cycling safety**")
-    
-    if 'precipitation_mm' not in time_series_df.columns and 'temperature' not in time_series_df.columns:
-        st.info("No weather data available for analysis")
-        return
-    
     col1, col2 = st.columns(2)
     
     with col1:
-        if 'precipitation_mm' in time_series_df.columns:
-            # Precipitation vs incidents
-            fig = px.scatter(
-                time_series_df,
-                x='precipitation_mm',
-                y='incidents',
-                title="Precipitation vs Incidents",
-                labels={'precipitation_mm': 'Precipitation (mm)', 'incidents': 'Incidents'},
-                trendline="ols"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("#### 🚨 Braking Hotspots")
+        if braking_df is not None and not braking_df.empty:
+            # Create braking hotspots map
+            try:
+                center_lat = braking_df['lat'].mean()
+                center_lon = braking_df['lon'].mean()
+                
+                fig = px.scatter_mapbox(
+                    braking_df,
+                    lat='lat',
+                    lon='lon',
+                    size='intensity',
+                    color='intensity',
+                    color_continuous_scale='Reds',
+                    mapbox_style='open-street-map',
+                    zoom=12,
+                    center={'lat': center_lat, 'lon': center_lon},
+                    height=400,
+                    title="Emergency Braking Incidents"
+                )
+                fig.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+                st.plotly_chart(fig, use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Error rendering braking hotspots map: {e}")
+        else:
+            st.info("No braking hotspot data available")
     
     with col2:
-        if 'temperature' in time_series_df.columns:
-            # Temperature vs safety score
-            fig = px.scatter(
-                time_series_df,
-                x='temperature',
-                y='safety_score',
-                title="Temperature vs Safety Score",
-                labels={'temperature': 'Temperature (°C)', 'safety_score': 'Safety Score'},
-                trendline="ols"
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.markdown("#### 🌪️ Swerving Hotspots")
+        if swerving_df is not None and not swerving_df.empty:
+            # Create swerving hotspots map
+            try:
+                center_lat = swerving_df['lat'].mean()
+                center_lon = swerving_df['lon'].mean()
+                
+                fig = px.scatter_mapbox(
+                    swerving_df,
+                    lat='lat',
+                    lon='lon',
+                    size='intensity',
+                    color='intensity',
+                    color_continuous_scale='Blues',
+                    mapbox_style='open-street-map',
+                    zoom=12,
+                    center={'lat': center_lat, 'lon': center_lon},
+                    height=400,
+                    title="Swerving Incidents"
+                )
+                fig.update_layout(margin={"r":0,"t":30,"l":0,"b":0})
+                st.plotly_chart(fig, use_container_width=True)
+                
+            except Exception as e:
+                st.error(f"Error rendering swerving hotspots map: {e}")
+        else:
+            st.info("No swerving hotspot data available")
+
+
+def render_trends_analysis(time_series_df):
+    """Render time series trends analysis"""
+    st.markdown("### 📈 Trends Analysis")
+    
+    if time_series_df is not None and not time_series_df.empty:
+        try:
+            # Ensure date column is datetime
+            time_series_df['date'] = pd.to_datetime(time_series_df['date'])
+            
+            # Create trends charts
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # Daily rides trend
+                if 'daily_rides' in time_series_df.columns:
+                    fig = px.line(
+                        time_series_df,
+                        x='date',
+                        y='daily_rides',
+                        title='Daily Cycling Activity',
+                        labels={'daily_rides': 'Number of Rides', 'date': 'Date'}
+                    )
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Daily rides data not available")
+            
+            with col2:
+                # Safety incidents trend
+                if 'incident_count' in time_series_df.columns:
+                    fig = px.line(
+                        time_series_df,
+                        x='date',
+                        y='incident_count',
+                        title='Safety Incidents Over Time',
+                        labels={'incident_count': 'Number of Incidents', 'date': 'Date'},
+                        line_shape='spline'
+                    )
+                    fig.update_traces(line_color='red')
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Incident count data not available")
+            
+            # Weekly patterns
+            st.markdown("#### 📅 Weekly Patterns")
+            try:
+                # Add day of week
+                time_series_df['day_of_week'] = time_series_df['date'].dt.day_name()
+                
+                # Group by day of week
+                if 'daily_rides' in time_series_df.columns:
+                    weekly_pattern = time_series_df.groupby('day_of_week')['daily_rides'].mean().reset_index()
+                    
+                    # Reorder days
+                    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                    weekly_pattern['day_of_week'] = pd.Categorical(weekly_pattern['day_of_week'], categories=day_order, ordered=True)
+                    weekly_pattern = weekly_pattern.sort_values('day_of_week')
+                    
+                    fig = px.bar(
+                        weekly_pattern,
+                        x='day_of_week',
+                        y='daily_rides',
+                        title='Average Daily Rides by Day of Week',
+                        labels={'day_of_week': 'Day of Week', 'daily_rides': 'Average Rides'}
+                    )
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+            except Exception as e:
+                logger.warning(f"Error creating weekly patterns: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error rendering trends analysis: {e}")
+            st.error("Error loading trends analysis")
+    else:
+        st.info("No time series data available for trends analysis")
 
 
 def render_recent_alerts(braking_df, swerving_df):
@@ -760,73 +565,59 @@ def render_recent_alerts(braking_df, swerving_df):
     
     alerts = []
     
-    # Get recent braking hotspots
-    if braking_df is not None and len(braking_df) > 0:
-        if 'date_recorded' in braking_df.columns:
-            braking_df['date_recorded'] = pd.to_datetime(braking_df['date_recorded'])
-            recent_braking = braking_df[
-                braking_df['date_recorded'] >= (braking_df['date_recorded'].max() - timedelta(days=7))
-            ]
-            
-            for _, alert in recent_braking.iterrows():
-                alerts.append({
-                    'type': 'Braking',
-                    'location': f"Lat: {alert['lat']:.4f}, Lon: {alert['lon']:.4f}",
-                    'severity': alert.get('severity_score', 'N/A'),
-                    'date': alert['date_recorded'],
-                    'description': f"New braking hotspot with {alert.get('incidents_count', 0)} incidents"
-                })
+    # Get recent high-intensity braking incidents
+    if braking_df is not None and not braking_df.empty:
+        try:
+            if 'date_recorded' in braking_df.columns and 'intensity' in braking_df.columns:
+                recent_braking = braking_df[braking_df['intensity'] >= 8.0].copy()
+                recent_braking['date_recorded'] = pd.to_datetime(recent_braking['date_recorded'])
+                recent_braking = recent_braking.sort_values('date_recorded', ascending=False).head(5)
+                
+                for _, row in recent_braking.iterrows():
+                    alerts.append({
+                        'type': '🚨 High-Intensity Braking',
+                        'location': f"({row['lat']:.4f}, {row['lon']:.4f})",
+                        'intensity': row['intensity'],
+                        'date': row['date_recorded'].strftime('%Y-%m-%d'),
+                        'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
+                    })
+        except Exception as e:
+            logger.warning(f"Error processing braking alerts: {e}")
     
-    # Get recent swerving hotspots
-    if swerving_df is not None and len(swerving_df) > 0:
-        if 'date_recorded' in swerving_df.columns:
-            swerving_df['date_recorded'] = pd.to_datetime(swerving_df['date_recorded'])
-            recent_swerving = swerving_df[
-                swerving_df['date_recorded'] >= (swerving_df['date_recorded'].max() - timedelta(days=7))
-            ]
-            
-            for _, alert in recent_swerving.iterrows():
-                alerts.append({
-                    'type': 'Swerving',
-                    'location': f"Lat: {alert['lat']:.4f}, Lon: {alert['lon']:.4f}",
-                    'severity': alert.get('severity_score', 'N/A'),
-                    'date': alert['date_recorded'],
-                    'description': f"New swerving hotspot with {alert.get('incidents_count', 0)} incidents"
-                })
+    # Get recent high-intensity swerving incidents
+    if swerving_df is not None and not swerving_df.empty:
+        try:
+            if 'date_recorded' in swerving_df.columns and 'intensity' in swerving_df.columns:
+                recent_swerving = swerving_df[swerving_df['intensity'] >= 8.0].copy()
+                recent_swerving['date_recorded'] = pd.to_datetime(recent_swerving['date_recorded'])
+                recent_swerving = recent_swerving.sort_values('date_recorded', ascending=False).head(5)
+                
+                for _, row in recent_swerving.iterrows():
+                    alerts.append({
+                        'type': '🌪️ High-Intensity Swerving',
+                        'location': f"({row['lat']:.4f}, {row['lon']:.4f})",
+                        'intensity': row['intensity'],
+                        'date': row['date_recorded'].strftime('%Y-%m-%d'),
+                        'severity': 'High' if row['intensity'] >= 9.0 else 'Medium'
+                    })
+        except Exception as e:
+            logger.warning(f"Error processing swerving alerts: {e}")
     
+    # Display alerts
     if alerts:
-        # Sort by date and severity
-        alerts.sort(key=lambda x: (x['date'], x['severity']), reverse=True)
+        # Sort by date and intensity
+        alerts_df = pd.DataFrame(alerts)
+        alerts_df = alerts_df.sort_values(['date', 'intensity'], ascending=[False, False])
         
-        # Display recent alerts
-        for alert in alerts[:5]:  # Show top 5 recent alerts
-            severity_color = '#dc3545' if alert['severity'] >= 7 else '#ffc107' if alert['severity'] >= 4 else '#28a745'
+        for _, alert in alerts_df.head(10).iterrows():
+            severity_color = "🔴" if alert['severity'] == 'High' else "🟡"
             
             st.markdown(f"""
-            <div style="
-                padding: 12px;
-                margin: 8px 0;
-                background-color: white;
-                border-radius: 8px;
-                border-left: 4px solid {severity_color};
-                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            ">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <div>
-                        <strong>🚨 {alert['type']} Alert</strong><br>
-                        <small>{alert['description']}</small><br>
-                        <small>📍 {alert['location']}</small>
-                    </div>
-                    <div style="text-align: right;">
-                        <div style="color: {severity_color}; font-weight: bold;">
-                            Severity: {alert['severity']}
-                        </div>
-                        <div style="font-size: 12px; color: #666;">
-                            {alert['date'].strftime('%Y-%m-%d')}
-                        </div>
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            **{severity_color} {alert['type']}**  
+            📍 Location: {alert['location']}  
+            📊 Intensity: {alert['intensity']:.1f}/10  
+            📅 Date: {alert['date']}
+            """)
+            st.markdown("---")
     else:
-        st.info("No recent safety alerts")
+        st.info("No recent high-intensity safety alerts to display")
