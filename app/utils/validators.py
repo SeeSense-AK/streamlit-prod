@@ -325,10 +325,16 @@ def clean_dataframe(df: pd.DataFrame, dataset_name: str) -> pd.DataFrame:
         # Filter out values outside min/max constraints
         if 'min' in constraint_dict:
             min_val = constraint_dict['min']
+            # FIXED: Safe numeric conversion before comparison
+            df_cleaned[column] = pd.to_numeric(df_cleaned[column], errors='coerce')
+            df_cleaned = df_cleaned.dropna(subset=[column])
             df_cleaned = df_cleaned[df_cleaned[column] >= min_val]
         
         if 'max' in constraint_dict:
             max_val = constraint_dict['max']
+            # FIXED: Safe numeric conversion before comparison
+            df_cleaned[column] = pd.to_numeric(df_cleaned[column], errors='coerce')
+            df_cleaned = df_cleaned.dropna(subset=[column])
             df_cleaned = df_cleaned[df_cleaned[column] <= max_val]
         
         # Filter out invalid categorical values
