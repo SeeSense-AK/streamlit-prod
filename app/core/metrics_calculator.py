@@ -46,39 +46,73 @@ class DataDrivenMetricsCalculator:
             return pd.Series(dtype=float)
     
     def _safe_comparison_filter(self, df: pd.DataFrame, column: str, threshold: float, operator: str = ">=") -> pd.DataFrame:
-        """Safely filter dataframe by numeric comparison, handling data type issues"""
+        """Safely filter dataframe by numeric comparison, handling data type issues - FIXED VERSION"""
         if df is None or df.empty or column not in df.columns:
             return pd.DataFrame()
-        
+    
         try:
-            numeric_column = self._safe_numeric_conversion(df, column)
+            # Create a copy to avoid modifying original
             filtered_df = df.copy()
-            filtered_df[column] = numeric_column
+        
+            # FORCE conversion to numeric with comprehensive error handling
+            original_series = filtered_df[column]
+        
+            # Convert to numeric, coercing errors to NaN
+            numeric_series = pd.to_numeric(original_series, errors='coerce')
+        
+            # Count and log conversion issues
+            na_count = numeric_series.isna().sum()
+            original_na = original_series.isna().sum()
+            new_na = na_count - original_na
+        
+            if new_na > 0:
+                self.logger.warning(f"Converted {new_na} non-numeric values to NaN in column '{column}' during filtering")
+        
+            # Update the dataframe with numeric values
+            filtered_df[column] = numeric_series
+        
+            # Remove rows where conversion failed
             filtered_df = filtered_df.dropna(subset=[column])
-            
+        
             if filtered_df.empty:
                 self.logger.warning(f"No valid numeric data in column '{column}' for filtering")
                 return pd.DataFrame()
+        
+            # Perform the comparison with additional safety checks
+            try:
+                # Ensure threshold is numeric
+                threshold = float(threshold)
             
-            if operator == ">=":
-                result = filtered_df[filtered_df[column] >= threshold]
-            elif operator == ">":
-                result = filtered_df[filtered_df[column] > threshold]
-            elif operator == "<=":
-                result = filtered_df[filtered_df[column] <= threshold]
-            elif operator == "<":
-                result = filtered_df[filtered_df[column] < threshold]
-            elif operator == "==":
-                result = filtered_df[filtered_df[column] == threshold]
-            else:
-                self.logger.error(f"Unsupported operator: {operator}")
-                return filtered_df
+                if operator == ">=":
+                    mask = filtered_df[column] >= threshold
+                elif operator == ">":
+                    mask = filtered_df[column] > threshold
+                elif operator == "<=":
+                    mask = filtered_df[column] <= threshold
+                elif operator == "<":
+                    mask = filtered_df[column] < threshold
+                elif operator == "==":
+                    mask = filtered_df[column] == threshold
+                else:
+                    self.logger.error(f"Unsupported operator: {operator}")
+                    return filtered_df
             
-            return result
+                result = filtered_df[mask]
+                self.logger.debug(f"Filtered {len(filtered_df)} rows to {len(result)} rows using {column} {operator} {threshold}")
+                return result
+            
+            except TypeError as te:
+                self.logger.error(f"Type error during comparison {column} {operator} {threshold}: {te}")
+                # Return empty DataFrame instead of original to avoid further errors
+                return pd.DataFrame()
+            except Exception as ce:
+                self.logger.error(f"Comparison error {column} {operator} {threshold}: {ce}")
+                return pd.DataFrame()
             
         except Exception as e:
             self.logger.error(f"Error filtering dataframe by {column} {operator} {threshold}: {e}")
-            return df
+            # Return empty DataFrame instead of original to avoid further errors
+            return pd.DataFrame()
     
     def calculate_all_overview_metrics(self, 
                                      routes_df: pd.DataFrame, 
