@@ -477,7 +477,7 @@ def render_anomaly_detection(time_series_df, braking_df, swerving_df, ml_options
 
 
 def render_feature_analysis(routes_df, braking_df, swerving_df, ml_options):
-    """Render feature importance and correlation analysis"""
+    """Render feature importance and correlation analysis - FIXED VERSION"""
     st.markdown("### 📊 Feature Analysis")
     st.markdown("Understand which factors most influence cycling safety")
     
@@ -485,59 +485,56 @@ def render_feature_analysis(routes_df, braking_df, swerving_df, ml_options):
         st.warning(f"Need at least {ml_options['min_samples']} records for feature analysis")
         return
     
-    # Correlation analysis
+    # Correlation analysis with proper error handling
     correlation_data = perform_correlation_analysis(routes_df, braking_df, swerving_df)
     
-    if correlation_data is None:
-        st.error("Failed to perform correlation analysis")
+    if correlation_data is None or not correlation_data.get('success', False):
+        st.error("Unable to perform correlation analysis - insufficient numeric data")
         return
     
     col1, col2 = st.columns(2)
     
     with col1:
         # Correlation heatmap
-        fig = px.imshow(
-            correlation_data['correlation_matrix'],
-            title="Feature Correlation Matrix",
-            color_continuous_scale='RdBu_r',
-            aspect='auto'
-        )
-        fig.update_layout(height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        try:
+            correlation_matrix = correlation_data['correlation_matrix']
+            fig = px.imshow(
+                correlation_matrix.values,
+                x=correlation_matrix.columns,
+                y=correlation_matrix.columns,
+                title="Feature Correlation Matrix",
+                color_continuous_scale='RdBu_r',
+                aspect='auto',
+                zmin=-1,
+                zmax=1
+            )
+            fig.update_layout(height=500)
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Error creating correlation heatmap: {e}")
     
     with col2:
         # Top correlations
-        if 'top_correlations' in correlation_data:
-            top_corr = correlation_data['top_correlations']
-            
-            fig = px.bar(
-                x=top_corr['correlation'].abs(),
-                y=top_corr['feature_pair'],
-                orientation='h',
-                title="Strongest Feature Correlations",
-                labels={'x': 'Absolute Correlation', 'y': 'Feature Pairs'},
-                color=top_corr['correlation'],
-                color_continuous_scale='RdBu_r'
-            )
-            fig.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
-            st.plotly_chart(fig, use_container_width=True)
-    
-    # Safety factor analysis
-    st.markdown("#### 🛡️ Safety Factor Analysis")
-    
-    safety_factors = analyze_safety_factors(routes_df, braking_df, swerving_df)
-    
-    if safety_factors:
-        factor_tabs = st.tabs(["🚦 Infrastructure", "🏃 Usage Patterns", "📍 Location"])
-        
-        with factor_tabs[0]:
-            render_infrastructure_analysis(safety_factors.get('infrastructure', {}))
-        
-        with factor_tabs[1]:
-            render_usage_analysis(safety_factors.get('usage', {}))
-        
-        with factor_tabs[2]:
-            render_location_analysis(safety_factors.get('location', {}))
+        try:
+            if 'top_correlations' in correlation_data and not correlation_data['top_correlations'].empty:
+                top_corr = correlation_data['top_correlations']
+                
+                fig = px.bar(
+                    top_corr,
+                    x='correlation',
+                    y='feature_pair',
+                    orientation='h',
+                    title="Strongest Feature Correlations",
+                    labels={'correlation': 'Correlation Coefficient', 'feature_pair': 'Feature Pairs'},
+                    color='correlation',
+                    color_continuous_scale='RdBu_r'
+                )
+                fig.update_layout(height=500)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("No significant correlations found")
+        except Exception as e:
+            st.error(f"Error creating correlation chart: {e}")
 
 
 # Helper functions for ML analysis
@@ -762,11 +759,28 @@ def detect_geographic_anomalies(braking_df, swerving_df):
 
 
 def perform_correlation_analysis(routes_df, braking_df, swerving_df):
-    """Perform correlation analysis on features"""
+    """Perform correlation analysis on features - FIXED VERSION"""
     try:
-        # Prepare correlation data
+        if routes_df is None or len(routes_df) == 0:
+            logger.warning("No routes data available for correlation analysis")
+            return None
+            
+        # Prepare correlation data with proper error handling
         numeric_cols = routes_df.select_dtypes(include=[np.number]).columns
-        correlation_matrix = routes_df[numeric_cols].corr()
+        
+        if len(numeric_cols) < 2:
+            logger.warning("Need at least 2 numeric columns for correlation analysis")
+            return None
+            
+        # Calculate correlation matrix with proper error handling
+        correlation_df = routes_df[numeric_cols].copy()
+        correlation_df = correlation_df.dropna()  # Remove rows with NaN values
+        
+        if len(correlation_df) == 0:
+            logger.warning("No valid data remaining after removing NaN values")
+            return None
+            
+        correlation_matrix = correlation_df.corr()
         
         # Find top correlations
         corr_pairs = []
@@ -776,20 +790,28 @@ def perform_correlation_analysis(routes_df, braking_df, swerving_df):
                 col2 = correlation_matrix.columns[j]
                 corr_val = correlation_matrix.iloc[i, j]
                 
-                if abs(corr_val) > 0.1:  # Only significant correlations
+                # Skip NaN correlations
+                if pd.isna(corr_val):
+                    continue
+                    
+                if abs(corr_val) > 0.1:  # Only include meaningful correlations
                     corr_pairs.append({
-                        'feature_pair': f"{col1} × {col2}",
+                        'feature_pair': f"{col1} vs {col2}",
                         'correlation': corr_val
                     })
         
-        top_correlations = pd.DataFrame(corr_pairs).sort_values(
-            'correlation', key=abs, ascending=False
-        ).head(10)
+        # Sort by absolute correlation value
+        corr_pairs.sort(key=lambda x: abs(x['correlation']), reverse=True)
+        top_correlations = pd.DataFrame(corr_pairs[:10])  # Top 10 correlations
         
-        return {
+        # Return the result dictionary with proper structure
+        result = {
             'correlation_matrix': correlation_matrix,
-            'top_correlations': top_correlations
+            'top_correlations': top_correlations,
+            'success': True
         }
+        
+        return result
         
     except Exception as e:
         logger.error(f"Error performing correlation analysis: {e}")
