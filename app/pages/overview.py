@@ -107,17 +107,24 @@ def render_overview_filters(routes_df, time_series_df):
     
     filters = {}
     
-    # Date range filter
-    if time_series_df is not None and filters.get('date_range'):
+    # Date range filter - FIX: Always create the filter UI elements first
+    if time_series_df is not None and not time_series_df.empty and 'date' in time_series_df.columns:
         try:
-            if isinstance(filters['date_range'], (list, tuple)) and len(filters['date_range']) == 2:
-                start_date, end_date = filters['date_range']
-                time_series_df['date'] = pd.to_datetime(time_series_df['date'])
-                # Ensure dates are compared with dates, not strings
-                mask = (time_series_df['date'].dt.date >= start_date) & (time_series_df['date'].dt.date <= end_date)
-                time_series_df = time_series_df[mask]
+            # Convert to datetime if needed
+            time_series_df['date'] = pd.to_datetime(time_series_df['date'])
+            min_date = time_series_df['date'].min().date()
+            max_date = time_series_df['date'].max().date()
+            
+            # Create date range selector
+            filters['date_range'] = st.sidebar.date_input(
+                "📅 Date Range",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                key="overview_date_filter"
+            )
         except Exception as e:
-            logger.warning(f"Error applying date filter: {e}")
+            logger.warning(f"Error setting up date filter: {e}")
             filters['date_range'] = None
     
     # Route type filter
@@ -136,23 +143,32 @@ def render_overview_filters(routes_df, time_series_df):
             logger.warning(f"Error setting up route type filter: {e}")
             filters['route_type'] = 'All'
     
-    # Minimum popularity filter with data validation
-    if routes_df is not None and filters.get('min_popularity'):
+    # Minimum popularity filter - FIX: Create UI element first, apply logic in apply_filters
+    if routes_df is not None and not routes_df.empty and 'popularity_rating' in routes_df.columns:
         try:
-            if 'popularity_rating' in routes_df.columns:
-                # FIXED: Ensure both sides of comparison are numeric
-                routes_df['popularity_rating'] = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
-                routes_df = routes_df.dropna(subset=['popularity_rating'])
+            # Convert to numeric for min/max calculation
+            numeric_popularity = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
+            valid_popularity = numeric_popularity.dropna()
             
-                # CRITICAL FIX: Convert filter value to numeric too
-                min_popularity_value = float(filters['min_popularity'])  # <-- Add this line
-            
-                routes_df = routes_df[routes_df['popularity_rating'] >= min_popularity_value]  # <-- Use converted value
+            if not valid_popularity.empty:
+                min_val = float(valid_popularity.min())
+                max_val = float(valid_popularity.max())
+                
+                filters['min_popularity'] = st.sidebar.slider(
+                    "⭐ Minimum Popularity",
+                    min_value=min_val,
+                    max_value=max_val,
+                    value=min_val,
+                    step=0.1,
+                    key="overview_popularity_filter"
+                )
+            else:
+                filters['min_popularity'] = None
         except Exception as e:
-            logger.warning(f"Error applying popularity filter: {e}")
-            filters['min_popularity'] = 1
+            logger.warning(f"Error setting up popularity filter: {e}")
+            filters['min_popularity'] = None
     
-        return filters
+    return filters
 
 
 def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, filters):
@@ -164,6 +180,7 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
             if isinstance(filters['date_range'], (list, tuple)) and len(filters['date_range']) == 2:
                 start_date, end_date = filters['date_range']
                 time_series_df['date'] = pd.to_datetime(time_series_df['date'])
+                # Ensure dates are compared with dates, not strings
                 mask = (time_series_df['date'].dt.date >= start_date) & (time_series_df['date'].dt.date <= end_date)
                 time_series_df = time_series_df[mask]
         except Exception as e:
@@ -177,17 +194,19 @@ def apply_overview_filters(routes_df, braking_df, swerving_df, time_series_df, f
         except Exception as e:
             logger.warning(f"Error applying route type filter: {e}")
     
-    # Apply popularity filter with proper data type handling
-    if routes_df is not None and filters.get('min_popularity'):
+    # Apply popularity filter with proper data type handling - FIX: Ensure numeric comparison
+    if routes_df is not None and filters.get('min_popularity') is not None:
         try:
             if 'popularity_rating' in routes_df.columns:
                 # FIXED: Convert popularity_rating to numeric, handling any non-numeric values
                 routes_df['popularity_rating'] = pd.to_numeric(routes_df['popularity_rating'], errors='coerce')
                 routes_df = routes_df.dropna(subset=['popularity_rating'])
-                routes_df = routes_df[routes_df['popularity_rating'] >= filters['min_popularity']]
+                
+                # CRITICAL FIX: Ensure the filter value is also numeric
+                min_popularity_value = float(filters['min_popularity'])
+                routes_df = routes_df[routes_df['popularity_rating'] >= min_popularity_value]
         except Exception as e:
             logger.warning(f"Error applying popularity filter: {e}")
-    
     
     return routes_df, braking_df, swerving_df, time_series_df
 
