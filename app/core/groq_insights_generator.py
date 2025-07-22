@@ -338,14 +338,13 @@ class GroqInsightsGenerator:
         cache_string = json.dumps(cache_data, sort_keys=True, default=str)
         return hashlib.md5(cache_string.encode()).hexdigest()
     
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _cached_generate_insights(_self, cache_key: str, metrics: Dict[str, Any], routes_shape: Optional[Tuple] = None) -> List[Dict]:
-        """Cached version of insights generation"""
+    def _cached_generate_insights(self, cache_key: str, metrics: Dict[str, Any], routes_shape: Optional[Tuple] = None) -> List[Dict]:
+        """Cached version of insights generation - FIXED"""
         logger.info(f"Generating fresh insights (cache miss): {cache_key[:8]}...")
-        
+    
         # Generate insights using the direct method
-        insights = _self._generate_insights_direct(metrics)
-        
+        insights = self._generate_insights_direct(metrics)
+    
         # Convert InsightSummary objects to dictionaries for caching
         insights_dict = []
         for insight in insights:
@@ -359,9 +358,17 @@ class GroqInsightsGenerator:
                 'confidence_score': insight.confidence_score,
                 'priority_rank': insight.priority_rank
             })
-        
+    
         logger.info(f"Generated {len(insights_dict)} insights and cached them")
         return insights_dict
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _get_cached_insights_wrapper(cache_key: str, metrics: Dict[str, Any], routes_shape: Optional[Tuple] = None) -> List[Dict]:
+        """Wrapper for caching insights - bypasses self parameter issues"""
+        # Create a new generator instance for caching
+        temp_generator = GroqInsightsGenerator()
+        return temp_generator._cached_generate_insights(cache_key, metrics, routes_shape)
+
     
     def _get_cached_insights(self, metrics: Dict[str, Any], routes_df: pd.DataFrame = None, force_refresh: bool = False) -> List[InsightSummary]:
         """Get insights with intelligent caching"""
@@ -391,7 +398,7 @@ class GroqInsightsGenerator:
         try:
             # Get cached insights
             routes_shape = routes_df.shape if routes_df is not None else None
-            insights_dict_list = self._cached_generate_insights(cache_key, metrics, routes_shape)
+            insights_dict_list = self._get_cached_insights_wrapper(cache_key, metrics, routes_shape)
             
             # Convert dictionaries back to InsightSummary objects
             insights = []
@@ -650,11 +657,10 @@ class GroqInsightsGenerator:
         else:
             return self._generate_executive_summary_direct(insights, metrics)
     
-    @st.cache_data(ttl=3600, show_spinner=False)
-    def _cached_generate_executive_summary(_self, cache_key: str, insights_dict: List[Dict], metrics: Dict[str, Any]) -> str:
-        """Cached version of executive summary generation"""
+    def _cached_generate_executive_summary(self, cache_key: str, insights_dict: List[Dict], metrics: Dict[str, Any]) -> str:
+        """Cached version of executive summary generation - FIXED"""
         logger.info(f"Generating fresh executive summary (cache miss): {cache_key[:8]}...")
-        
+    
         # Convert dict back to InsightSummary objects
         insights = []
         for insight_dict in insights_dict:
@@ -668,11 +674,18 @@ class GroqInsightsGenerator:
                 confidence_score=insight_dict['confidence_score'],
                 priority_rank=insight_dict['priority_rank']
             ))
-        
+    
         # Generate summary using direct method
-        summary = _self._generate_executive_summary_direct(insights, metrics)
+        summary = self._generate_executive_summary_direct(insights, metrics)
         logger.info("Generated executive summary and cached it")
         return summary
+
+    @st.cache_data(ttl=3600, show_spinner=False)
+    def _get_cached_summary_wrapper(cache_key: str, insights_dict: List[Dict], metrics: Dict[str, Any]) -> str:
+        """Wrapper for caching executive summary"""
+        temp_generator = GroqInsightsGenerator()
+        return temp_generator._cached_generate_executive_summary(cache_key, insights_dict, metrics)
+
     
     def _get_cached_executive_summary(self, insights: List[InsightSummary], metrics: Dict[str, Any], force_refresh: bool = False) -> str:
         """Get executive summary with caching"""
@@ -698,7 +711,7 @@ class GroqInsightsGenerator:
             })
         
         try:
-            return self._cached_generate_executive_summary(cache_key, insights_dict, metrics)
+            return self._get_cached_summary_wrapper(cache_key, insights_dict, metrics)
         except Exception as e:
             logger.error(f"Error getting cached summary: {e}")
             return self._generate_executive_summary_direct(insights, metrics)
