@@ -1274,7 +1274,7 @@ def generate_friendly_factors_insight(factor_results):
 # Keep the original function name for compatibility
 def render_ml_insights_page():
     """Wrapper to maintain compatibility with existing code"""
-    render_smart_insights_page()fillna(X[col].median())
+    render_smart_insights_page()
         
         # Standardize and cluster
         scaler = StandardScaler()
