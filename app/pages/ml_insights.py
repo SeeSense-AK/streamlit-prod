@@ -1330,3 +1330,4 @@ def create_friendly_characteristics(characteristics, meaningful_features):
         return descriptions[:4]
         
     except Exception as e:
+        
