@@ -91,6 +91,10 @@ def render_smart_insights_page():
         return ["Unique cycling style"]
 
 
+    # AI-generated insight with real data
+    generate_friendly_pattern_insight(pattern_results, data_source)
+
+
 def generate_friendly_pattern_insight(pattern_results, data_source):
     """Generate friendly insight from real pattern analysis"""
     try:
