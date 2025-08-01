@@ -810,7 +810,7 @@ def render_critical_insights(analysis_results):
         priority_recs = critical_recs + high_recs
         
         for i, rec in enumerate(priority_recs[:3]):  # Show top 3 priority items
-            with st.expander(f"🔥 Priority {i+1}: {rec['title']}", expanded=(i==0)):
+            with st.expander(f"🔥 **Priority {i+1}: {rec['title']}**", expanded=(i==0)):
                 
                 col1, col2 = st.columns([2, 1])
                 
@@ -823,9 +823,11 @@ def render_critical_insights(analysis_results):
                 
                 with col2:
                     st.markdown("**Investment Analysis**")
-                    st.metric("Estimated Cost", f"${rec['estimated_cost']:,}")
-                    st.metric("Expected Impact", rec['expected_impact'])
-                    st.metric("Timeline", rec['timeframe'])
+                    
+                    # Use smaller text for investment details
+                    st.markdown(f"**Cost:** ${rec['estimated_cost']:,}")
+                    st.markdown(f"**Expected Impact:** {rec['expected_impact']}")
+                    st.markdown(f"**Timeline:** {rec['timeframe']}")
                     
                     # Calculate ROI
                     if rec['estimated_cost'] > 0:
@@ -840,7 +842,7 @@ def render_critical_insights(analysis_results):
                                     avg_reduction = sum(int(p) for p in percentages) / len(percentages) / 100
                                     annual_savings = potential_savings * avg_reduction
                                     roi = ((annual_savings - rec['estimated_cost']) / rec['estimated_cost']) * 100
-                                    st.metric("Estimated ROI", f"{roi:.0f}%")
+                                    st.markdown(f"**Estimated ROI:** {roi:.0f}%")
                             except:
                                 pass
     else:
@@ -969,10 +971,10 @@ def render_risk_assessment(analysis_results):
         risk_color = risk_colors.get(risk_analysis['overall_risk_level'], '#6b7280')
         
         st.markdown(f"""
-        <div style="background: {risk_color}; color: white; padding: 20px; border-radius: 10px; text-align: center; margin: 10px 0;">
-            <h2 style="margin: 0; color: white;">Risk Level: {risk_analysis['overall_risk_level']}</h2>
-            <h1 style="margin: 10px 0; color: white;">{risk_analysis['risk_score']}/100</h1>
-            <p style="margin: 0; color: white;">Risk Score</p>
+        <div style="background: {risk_color}; color: white; padding: 15px; border-radius: 8px; text-align: center; margin: 10px 0;">
+            <h3 style="margin: 0; color: white;">Risk Level: {risk_analysis['overall_risk_level']}</h3>
+            <h2 style="margin: 5px 0; color: white;">{risk_analysis['risk_score']}/100</h2>
+            <p style="margin: 0; color: white; font-size: 14px;">Risk Score</p>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1119,35 +1121,69 @@ def render_action_recommendations(analysis_results):
     # Create action timeline
     st.markdown("### 📅 Recommended Implementation Timeline")
     
-    timeline_data = []
-    for rec in recommendations:
-        if rec['timeframe']:
-            # Extract months from timeframe
-            import re
-            months = re.findall(r'(\d+)', rec['timeframe'])
-            if months:
-                max_months = max(int(m) for m in months)
-                timeline_data.append({
-                    'Task': rec['title'],
-                    'Start': 0,
-                    'Finish': max_months,
-                    'Priority': rec['priority']
-                })
-    
-    if timeline_data:
-        timeline_df = pd.DataFrame(timeline_data)
+    if recommendations:
+        timeline_data = []
+        base_date = datetime.now()
         
-        # Create Gantt-style chart
-        fig = px.timeline(
-            timeline_df,
-            x_start='Start',
-            x_end='Finish',
-            y='Task',
-            color='Priority',
-            title="Implementation Timeline (Months)"
-        )
-        fig.update_layout(height=400, template="plotly_white")
-        st.plotly_chart(fig, use_container_width=True)
+        for i, rec in enumerate(recommendations):
+            if rec['timeframe']:
+                # Extract months from timeframe
+                import re
+                months = re.findall(r'(\d+)', rec['timeframe'])
+                if months:
+                    max_months = max(int(m) for m in months)
+                    start_date = base_date + timedelta(days=30*i)  # Stagger start dates
+                    end_date = start_date + timedelta(days=30*max_months)
+                    
+                    timeline_data.append({
+                        'Task': rec['title'],
+                        'Start': start_date,
+                        'Finish': end_date,
+                        'Priority': rec['priority'],
+                        'Duration': max_months
+                    })
+        
+        if timeline_data:
+            timeline_df = pd.DataFrame(timeline_data)
+            
+            # Create horizontal bar chart showing timeline
+            fig = go.Figure()
+            
+            priority_colors = {
+                'Critical': '#dc2626',
+                'High': '#ea580c', 
+                'Medium': '#ca8a04',
+                'Low': '#16a34a'
+            }
+            
+            for i, row in timeline_df.iterrows():
+                fig.add_trace(go.Scatter(
+                    x=[row['Start'], row['Finish']],
+                    y=[row['Task'], row['Task']],
+                    mode='lines+markers',
+                    line=dict(
+                        color=priority_colors.get(row['Priority'], '#6b7280'),
+                        width=8
+                    ),
+                    marker=dict(size=8),
+                    name=f"{row['Priority']} Priority",
+                    showlegend=(i == 0 or row['Priority'] != timeline_df.iloc[i-1]['Priority'])
+                ))
+            
+            fig.update_layout(
+                title="Implementation Timeline",
+                xaxis_title="Timeline",
+                yaxis_title="Action Items",
+                height=400,
+                template="plotly_white",
+                xaxis=dict(type='date')
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No timeline data available for visualization")
+    else:
+        st.info("No recommendations available for timeline planning")
     
     # Priority matrix
     st.markdown("### 🎯 Priority Action Matrix")
