@@ -1084,13 +1084,13 @@ def render_opportunity_identification(analysis_results):
         
         for initiative in strategic:
             st.markdown(f"""
-            **{initiative['title']}**
-            
-            {initiative['description']}
-            
-            • Investment: ${initiative['estimated_investment']:,}
-            • Impact: {initiative['potential_impact']}
-            • Timeline: {initiative['timeframe']}
+**{initiative['title']}**
+
+{initiative['description']}
+
+• Investment: ${initiative['estimated_investment']:,}
+• Impact: {initiative['potential_impact']}
+• Timeline: {initiative['timeframe']}
             """)
     
     with col2:
@@ -1100,12 +1100,12 @@ def render_opportunity_identification(analysis_results):
         
         for innovation in innovations:
             st.markdown(f"""
-            **{innovation['title']}**
-            
-            {innovation['description']}
-            
-            • Technology Readiness: {innovation['technology_readiness']}
-            • Potential Impact: {innovation['potential_impact']}
+**{innovation['title']}**
+
+{innovation['description']}
+
+• Technology Readiness: {innovation['technology_readiness']}
+• Potential Impact: {innovation['potential_impact']}
             """)
 
 
@@ -1167,11 +1167,11 @@ def render_action_recommendations(analysis_results):
         if critical_actions:
             for action in critical_actions:
                 st.markdown(f"""
-                **{action['title']}**
-                
-                Cost: ${action['estimated_cost']:,}
-                Timeline: {action['timeframe']}
-                Impact: {action['expected_impact']}
+**{action['title']}**
+
+Cost: ${action['estimated_cost']:,}
+Timeline: {action['timeframe']}
+Impact: {action['expected_impact']}
                 """)
         else:
             st.success("✅ No critical actions required")
@@ -1182,10 +1182,10 @@ def render_action_recommendations(analysis_results):
         
         for action in high_actions[:2]:  # Show top 2
             st.markdown(f"""
-            **{action['title']}**
-            
-            Cost: ${action['estimated_cost']:,}
-            Timeline: {action['timeframe']}
+**{action['title']}**
+
+Cost: ${action['estimated_cost']:,}
+Timeline: {action['timeframe']}
             """)
     
     with col3:
@@ -1194,10 +1194,10 @@ def render_action_recommendations(analysis_results):
         
         for action in medium_actions[:2]:  # Show top 2
             st.markdown(f"""
-            **{action['title']}**
-            
-            Cost: ${action['estimated_cost']:,}
-            Timeline: {action['timeframe']}
+**{action['title']}**
+
+Cost: ${action['estimated_cost']:,}
+Timeline: {action['timeframe']}
             """)
     
     # Summary recommendations
