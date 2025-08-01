@@ -1086,7 +1086,7 @@ def render_opportunity_identification(analysis_results):
             st.markdown(f"""
             **{initiative['title']}**
             
-            {initiative['description'])
+            {initiative['description']}
             
             • Investment: ${initiative['estimated_investment']:,}
             • Impact: {initiative['potential_impact']}
