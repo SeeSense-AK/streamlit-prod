@@ -28,8 +28,6 @@ from app.pages.advanced_analytics import render_advanced_analytics_page
 from app.pages.actionable_insights import render_actionable_insights_page
 from app.pages.data_setup import render_data_setup_page
 
-# Future page imports (we'll add these as we build them)
-# from app.pages.actionable_insights import render_actionable_insights_page
 
 logger = logging.getLogger(__name__)
 
