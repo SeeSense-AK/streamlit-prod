@@ -1,177 +1,488 @@
-"""
-Smart Insights Page for SeeSense Dashboard - Clean Version
-Beautiful, non-technical presentation with real computations behind the scenes
-"""
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
-from sklearn.ensemble import RandomForestRegressor, IsolationForest
-from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, r2_score, silhouette_score
-from datetime import datetime, timedelta
-import logging
-import warnings
-
-from app.core.data_processor import data_processor
-from app.utils.config import config
-
-warnings.filterwarnings('ignore', category=UserWarning)
-logger = logging.getLogger(__name__)
+def get_data_availability_message(df):
+    """Get friendly message about data availability"""
+    if df is None:
+        return "No data available for this period."
+    else:
+        return f"Currently have {len(df)} records for analysis."
 
 
-def render_smart_insights_page():
-    """Render the Smart Insights page with beautiful UI and real computations"""
-    st.title("🧠 Smart Insights")
-    st.markdown("**AI discovers actionable patterns in your cycling data to keep you safer**")
-    
-    with st.expander("ℹ️ What are Smart Insights?", expanded=False):
-        st.markdown("""
-        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; color: white; margin: 10px 0;'>
-        <h4 style='color: white; margin-top: 0;'>🤖 Your Personal Safety AI</h4>
-        Our advanced AI analyzes your cycling data to discover patterns and predict safety risks.
-        Think of it as having a smart assistant that learns from bike rides to give you personalized safety tips.
-        </div>
-        """, unsafe_allow_html=True)
-    
+def create_dynamic_safety_predictions(df, meaningful_features):
+    """Create safety predictions using real data with dynamic filtering"""
     try:
-        all_data = data_processor.load_all_datasets()
-        available_datasets = [name for name, (df, _) in all_data.items() if df is not None]
+        # Prepare meaningful feature matrix
+        X = df[meaningful_features].copy()
+        for col in meaningful_features:
+            X[col] = X[col].fillna(X[col].median())
         
-        if not available_datasets:
-            render_no_data_message()
-            return
+        # Create intelligent safety target
+        safety_target = create_intelligent_safety_target(df, meaningful_features)
         
-        routes_df = all_data.get('routes', (None, {}))[0]
-        braking_df = all_data.get('braking_hotspots', (None, {}))[0]
-        swerving_df = all_data.get('swerving_hotspots', (None, {}))[0]
-        time_series_df = all_data.get('time_series', (None, {}))[0]
+        if safety_target is None:
+            return None
         
-        smart_options = render_simple_controls()
+        # Train model with cross-validation for smaller datasets
+        if len(X) < 20:
+            # Use all data for training when dataset is small
+            model = RandomForestRegressor(n_estimators=50, random_state=42, max_depth=5)
+            model.fit(X, safety_target)
+            predictions = model.predict(X)
+            r2 = r2_score(safety_target, predictions)
+        else:
+            # Use train-test split for larger datasets
+            X_train, X_test, y_train, y_test = train_test_split(X, safety_target, test_size=0.2, random_state=42)
+            model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=8)
+            model.fit(X_train, y_train)
+            predictions = model.predict(X_test)
+            r2 = r2_score(y_test, predictions)
         
-        safety_tab, patterns_tab, alerts_tab, insights_tab = st.tabs([
-            "🎯 Safety Predictions", 
-            "👥 Your Cycling Patterns", 
-            "⚠️ Safety Alerts", 
-            "📊 What Affects Your Safety"
-        ])
+        # Create user-friendly feature names
+        feature_importance = pd.DataFrame({
+            'feature': meaningful_features,
+            'importance': model.feature_importances_,
+            'friendly_name': [make_feature_friendly(f) for f in meaningful_features]
+        }).sort_values('importance', ascending=True)
         
-        with safety_tab:
-            render_safety_predictions(routes_df, braking_df, swerving_df, time_series_df, smart_options)
-        
-        with patterns_tab:
-            render_cycling_patterns(routes_df, time_series_df, smart_options)
-        
-        with alerts_tab:
-            render_safety_alerts(time_series_df, braking_df, swerving_df, smart_options)
-        
-        with insights_tab:
-            render_safety_factors(routes_df, braking_df, swerving_df, time_series_df, smart_options)
+        return {
+            'model': model,
+            'predictions': predictions,
+            'feature_importance': feature_importance,
+            'accuracy': r2,
+            'meaningful_features': meaningful_features
+        }
         
     except Exception as e:
-        logger.error(f"Error in Smart Insights page: {e}")
-        st.error("⚠️ Something went wrong while analyzing your data.")
-        st.info("Please check your data files and try refreshing the page.")
+        logger.error(f"Error in dynamic safety predictions: {e}")
+        return None
 
 
-def render_no_data_message():
-    """Render friendly message when no data is available"""
-    st.warning("⚠️ No cycling data found for smart analysis.")
-    st.markdown("""
-    To get smart insights, you need some cycling data:
-    
-    📍 **Route information** - Where you've been cycling
-    ⏱️ **Ride history** - Your past cycling activities  
-    🚨 **Safety events** - Any times you had to brake hard or swerve
-    
-    Once you add your data files, come back here to see what patterns our AI discovers!
-    """)
+def create_intelligent_safety_target(df, meaningful_features):
+    """Create intelligent safety target based on meaningful variables"""
+    try:
+        # Prioritize incident-based targets
+        if 'incidents' in meaningful_features:
+            incidents = df['incidents'].fillna(df['incidents'].median())
+            max_incidents = incidents.max()
+            if max_incidents > 0:
+                return 1 - (incidents / max_incidents)  # Inverse relationship
+            else:
+                return np.ones(len(incidents))
+        
+        elif 'avg_braking_events' in meaningful_features:
+            braking = df['avg_braking_events'].fillna(df['avg_braking_events'].median())
+            max_braking = braking.max()
+            if max_braking > 0:
+                return 1 - (braking / max_braking)
+            else:
+                return np.ones(len(braking))
+        
+        elif 'avg_swerving_events' in meaningful_features:
+            swerving = df['avg_swerving_events'].fillna(df['avg_swerving_events'].median())
+            max_swerving = swerving.max()
+            if max_swerving > 0:
+                return 1 - (swerving / max_swerving)
+            else:
+                return np.ones(len(swerving))
+            
+        elif 'intensity' in meaningful_features:
+            intensity = df['intensity'].fillna(df['intensity'].median())
+            max_intensity = intensity.max()
+            if max_intensity > 0:
+                return 1 - (intensity / max_intensity)
+            else:
+                return np.ones(len(intensity))
+        
+        else:
+            # Use composite safety score
+            safety_components = []
+            
+            if 'avg_speed' in meaningful_features:
+                speed = df['avg_speed'].fillna(df['avg_speed'].median())
+                speed_median = speed.median()
+                speed_range = speed.max() - speed.min()
+                if speed_range > 0:
+                    speed_safety = 1 - (np.abs(speed - speed_median) / speed_range)
+                    safety_components.append(speed_safety)
+            
+            if 'incidents_count' in meaningful_features:
+                incidents = df['incidents_count'].fillna(df['incidents_count'].median())
+                max_incidents = incidents.max()
+                if max_incidents > 0:
+                    safety_components.append(1 - (incidents / max_incidents))
+            
+            if 'precipitation_mm' in meaningful_features:
+                precip = df['precipitation_mm'].fillna(0)
+                max_precip = precip.max()
+                if max_precip > 0:
+                    weather_safety = 1 - (precip / max_precip)
+                    safety_components.append(weather_safety)
+            
+            if len(safety_components) > 0:
+                return np.mean(safety_components, axis=0)
+            else:
+                # Last resort: use first meaningful feature
+                first_feature = df[meaningful_features[0]].fillna(df[meaningful_features[0]].median())
+                feature_range = first_feature.max() - first_feature.min()
+                if feature_range > 0:
+                    return (first_feature - first_feature.min()) / feature_range
+                else:
+                    return np.ones(len(first_feature)) * 0.5
+                
+    except Exception as e:
+        logger.error(f"Error creating safety target: {e}")
+        return None
 
 
-def render_simple_controls():
-    """Render user-friendly configuration controls"""
-    st.sidebar.markdown("### ⚙️ Analysis Settings")
-    
-    options = {}
-    
-    options['sensitivity'] = st.sidebar.radio(
-        "Alert Sensitivity",
-        ["Low", "Medium", "High"],
-        index=1,
-        help="How sensitive should safety alerts be? Higher = more alerts"
-    )
-    
-    sensitivity_map = {"Low": 0.1, "Medium": 0.05, "High": 0.02}
-    options['anomaly_contamination'] = sensitivity_map[options['sensitivity']]
-    
-    options['prediction_period'] = st.sidebar.selectbox(
-        "Look Ahead",
-        ["1 Week", "2 Weeks", "1 Month", "3 Months"],
-        index=2,
-        help="How far into the future should we predict safety risks?"
-    )
-    
-    period_map = {"1 Week": 7, "2 Weeks": 14, "1 Month": 30, "3 Months": 90}
-    options['prediction_days'] = period_map[options['prediction_period']]
-    
-    options['group_similar_rides'] = st.sidebar.selectbox(
-        "Group Similar Rides",
-        ["2-3 groups", "4-5 groups", "6-8 groups"],
-        index=1,
-        help="How many different types of riding patterns should we look for?"
-    )
-    
-    cluster_map = {"2-3 groups": 3, "4-5 groups": 4, "6-8 groups": 6}
-    options['n_clusters'] = cluster_map[options['group_similar_rides']]
-    options['min_data_needed'] = 20
-    
-    return options
+def analyze_dynamic_cycling_dna(df, meaningful_features, n_clusters):
+    """Analyze cycling patterns dynamically based on filtered data"""
+    try:
+        # Prepare feature matrix
+        X = df[meaningful_features].copy()
+        for col in meaningful_features:
+            X[col] = X[col].fillna(X[col].median())
+        
+        # Adjust number of clusters based on data size
+        effective_clusters = min(n_clusters, len(df) // 3, 5)  # Max 5 clusters, min 3 samples per cluster
+        if effective_clusters < 2:
+            effective_clusters = 2
+        
+        # Standardize features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+        
+        # Perform clustering
+        kmeans = KMeans(n_clusters=effective_clusters, random_state=42, n_init=10)
+        clusters = kmeans.fit_predict(X_scaled)
+        
+        # Calculate silhouette score for cluster quality
+        if len(set(clusters)) > 1:
+            silhouette_avg = silhouette_score(X_scaled, clusters)
+        else:
+            silhouette_avg = 0
+        
+        # Create cycling personas based on real data
+        personas = create_dynamic_cycling_personas(df, meaningful_features, clusters, effective_clusters)
+        
+        # Analyze persona distribution
+        unique_clusters, cluster_counts = np.unique(clusters, return_counts=True)
+        persona_distribution = pd.DataFrame({
+            'persona': [personas.get(i, f"Style {i}") for i in unique_clusters],
+            'count': cluster_counts,
+            'percentage': cluster_counts / len(clusters) * 100
+        })
+        
+        # Generate personality traits based on actual data
+        personality_traits = generate_dynamic_personality_traits(df, meaningful_features, clusters)
+        
+        # Create timeline if date data available
+        pattern_timeline = None
+        if 'date' in df.columns and len(df) > 7:
+            try:
+                df_with_clusters = df.copy()
+                df_with_clusters['cluster'] = clusters
+                df_with_clusters['persona'] = [personas.get(c, f"Style {c}") for c in clusters]
+                df_with_clusters['date'] = pd.to_datetime(df_with_clusters['date'])
+                
+                # Group by appropriate time period based on data range
+                date_range = (df_with_clusters['date'].max() - df_with_clusters['date'].min()).days
+                if date_range > 60:
+                    period = 'W'  # Weekly
+                elif date_range > 14:
+                    period = 'W'  # Weekly
+                else:
+                    period = 'D'  # Daily
+                
+                grouped_patterns = df_with_clusters.groupby(
+                    df_with_clusters['date'].dt.to_period(period)
+                )['persona'].agg(lambda x: x.mode().iloc[0] if len(x.mode()) > 0 else x.iloc[0]).reset_index()
+                
+                grouped_patterns['date'] = grouped_patterns['date'].dt.start_time
+                grouped_patterns.columns = ['date', 'dominant_persona']
+                
+                pattern_timeline = grouped_patterns
+            except Exception as e:
+                logger.error(f"Error creating timeline: {e}")
+                pattern_timeline = None
+        
+        return {
+            'clusters': clusters,
+            'personas': personas,
+            'persona_distribution': persona_distribution,
+            'personality_traits': personality_traits,
+            'pattern_timeline': pattern_timeline,
+            'n_patterns': effective_clusters,
+            'silhouette_score': silhouette_avg
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in dynamic cycling DNA analysis: {e}")
+        return None
 
 
-def get_meaningful_features(df):
-    """Extract only meaningful features for analysis, excluding coordinates and IDs"""
-    if df is None or df.empty:
-        return []
+def create_dynamic_cycling_personas(df, meaningful_features, clusters, n_clusters):
+    """Create meaningful cycling persona names based on real cluster characteristics"""
+    personas = {}
     
-    meaningful_patterns = [
-        'speed', 'duration', 'distance', 'incidents', 'braking', 'swerving', 
-        'temperature', 'precipitation', 'wind', 'visibility', 'intensity',
-        'popularity', 'rating', 'days_active', 'cyclists', 'severity',
-        'deceleration', 'lateral', 'total_rides'
-    ]
-    
-    exclude_patterns = ['lat', 'lon', 'id', '_id', 'start_', 'end_', 'hotspot_id', 'route_id']
-    
-    all_columns = df.columns.tolist()
-    meaningful_columns = []
-    
-    for col in all_columns:
-        col_lower = col.lower()
-        if any(pattern in col_lower for pattern in meaningful_patterns):
-            if not any(exclude in col_lower for exclude in exclude_patterns):
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    if df[col].nunique() > 1 and df[col].std() > 0:
-                        meaningful_columns.append(col)
-    
-    return meaningful_columns
+    try:
+        for cluster_id in range(n_clusters):
+            cluster_mask = clusters == cluster_id
+            cluster_data = df[cluster_mask]
+            
+            if len(cluster_data) == 0:
+                personas[cluster_id] = f"Unique Style {cluster_id}"
+                continue
+            
+            # Analyze cluster characteristics based on actual data
+            persona_name = "🚴‍♀️ Balanced Rider"  # Default
+            
+            # Check speed patterns
+            if 'avg_speed' in meaningful_features and len(df) > 1:
+                cluster_speed = cluster_data['avg_speed'].mean()
+                overall_speed = df['avg_speed'].mean()
+                if cluster_speed > overall_speed * 1.15:
+                    persona_name = "⚡ Speed Enthusiast"
+                elif cluster_speed < overall_speed * 0.85:
+                    persona_name = "🐌 Leisurely Cruiser"
+            
+            # Check incident patterns
+            if 'incidents' in meaningful_features and len(df) > 1:
+                cluster_incidents = cluster_data['incidents'].mean()
+                overall_incidents = df['incidents'].mean()
+                if cluster_incidents > overall_incidents * 1.3:
+                    persona_name = "🚨 Risk Aware"  # More positive framing
+                elif cluster_incidents < overall_incidents * 0.7:
+                    persona_name = "🛡️ Safety Champion"
+            
+            # Check braking patterns
+            if 'avg_braking_events' in meaningful_features and len(df) > 1:
+                cluster_braking = cluster_data['avg_braking_events'].mean()
+                overall_braking = df['avg_braking_events'].mean()
+                if cluster_braking > overall_braking * 1.2:
+                    persona_name = "🚦 Cautious Commuter"
+                elif cluster_braking < overall_braking * 0.8:
+                    persona_name = "🌊 Smooth Operator"
+            
+            # Check weather patterns
+            if 'temperature' in meaningful_features and len(df) > 1:
+                cluster_temp = cluster_data['temperature'].mean()
+                temp_q75 = df['temperature'].quantile(0.75)
+                temp_q25 = df['temperature'].quantile(0.25)
+                if cluster_temp < temp_q25:
+                    persona_name = "❄️ Winter Warrior"
+                elif cluster_temp > temp_q75:
+                    persona_name = "☀️ Summer Cyclist"
+            
+            personas[cluster_id] = persona_name
+        
+        return personas
+        
+    except Exception as e:
+        logger.error(f"Error creating personas: {e}")
+        return {i: f"Style {i}" for i in range(n_clusters)}
 
 
-def choose_best_dataset_for_analysis(datasets, min_records):
-    """Choose the best dataset for analysis based on size and features"""
-    for df, name in datasets:
-        if df is not None and len(df) >= min_records:
-            meaningful_features = get_meaningful_features(df)
-            if len(meaningful_features) >= 2:
-                return df, name
+def generate_dynamic_personality_traits(df, meaningful_features, clusters):
+    """Generate personality traits based on actual cycling patterns"""
+    traits = []
     
-    valid_datasets = [(df, name) for df, name in datasets if df is not None and len(df) > 0]
-    if valid_datasets:
-        return max(valid_datasets, key=lambda x: len(x[0]))
+    try:
+        # Analyze overall patterns from real data
+        if 'avg_speed' in meaningful_features and len(df) > 1:
+            avg_speed = df['avg_speed'].mean()
+            median_speed = df['avg_speed'].median()
+            if avg_speed > median_speed * 1.1:
+                traits.append("You prefer riding at above-average speeds")
+            elif avg_speed < median_speed * 0.9:
+                traits.append("You enjoy a comfortable, steady pace")
+        
+        if 'incidents' in meaningful_features and len(df) > 1:
+            avg_incidents = df['incidents'].mean()
+            median_incidents = df['incidents'].median()
+            if avg_incidents < median_incidents:
+                traits.append("You have fewer safety incidents than your typical rides")
+            elif avg_incidents > median_incidents * 1.2:
+                traits.append("You encounter more varied riding conditions")
+        
+        if 'avg_braking_events' in meaningful_features and len(df) > 1:
+            avg_braking = df['avg_braking_events'].mean()
+            median_braking = df['avg_braking_events'].median()
+            if avg_braking < median_braking:
+                traits.append("You brake smoothly and predictably")
+            else:
+                traits.append("You're responsive to changing conditions")
+        
+        if 'precipitation_mm' in meaningful_features:
+            rides_in_rain = (df['precipitation_mm'] > 0).sum() if 'precipitation_mm' in df.columns else 0
+            total_rides = len(df)
+            if total_rides > 0:
+                rain_percentage = rides_in_rain / total_rides * 100
+                
+                if rain_percentage > 25:
+                    traits.append("You're a dedicated all-weather cyclist")
+                elif rain_percentage < 5:
+                    traits.append("You prefer fair weather riding")
+        
+        if 'temperature' in meaningful_features and len(df) > 1:
+            temp_range = df['temperature'].max() - df['temperature'].min()
+            if temp_range > 15:
+                traits.append("You cycle across diverse weather conditions")
+            elif df['temperature'].mean() > 20:
+                traits.append("You prefer warmer cycling conditions")
+            elif df['temperature'].mean() < 10:
+                traits.append("You embrace cooler cycling weather")
+        
+        # Ensure we have at least some traits
+        if len(traits) == 0:
+            # Cluster-based fallback traits
+            n_clusters = len(set(clusters))
+            if n_clusters > 3:
+                traits.append("You have a diverse cycling style with multiple patterns")
+            elif n_clusters == 2:
+                traits.append("You have two distinct cycling patterns")
+            else:
+                traits.append("You have a consistent cycling style")
+            
+            traits.append("Your riding patterns are developing")
+        
+        return traits[:4]  # Return top 4 traits
+        
+    except Exception as e:
+        logger.error(f"Error generating traits: {e}")
+        return ["You have a unique cycling style"]
+
+
+def detect_dynamic_intelligent_alerts(df, meaningful_features, options):
+    """Detect intelligent safety alerts using dynamic data"""
+    try:
+        # Prepare feature matrix
+        X = df[meaningful_features].copy()
+        for col in meaningful_features:
+            X[col] = X[col].fillna(X[col].median())
+        
+        # Detect anomalies with adjusted contamination for smaller datasets
+        effective_contamination = min(options['anomaly_contamination'], 0.2)  # Cap at 20%
+        if len(df) < 20:
+            effective_contamination = max(effective_contamination, 1/len(df))  # At least 1 anomaly
+        
+        isolation_forest = IsolationForest(
+            contamination=effective_contamination,
+            random_state=42
+        )
+        anomalies = isolation_forest.fit_predict(X)
+        
+        # Create intelligent alerts
+        alert_mask = anomalies == -1
+        alert_data = df[alert_mask].copy()
+        
+        if len(alert_data) == 0:
+            return {
+                'priority_alerts': [],
+                'summary_stats': {'total_alerts': 0, 'safe_days': len(df), 'anomaly_rate': 0}
+            }
+        
+        # Generate intelligent alert descriptions
+        priority_alerts = []
+        for _, row in alert_data.iterrows():
+            alert = generate_dynamic_intelligent_alert_description(row, meaningful_features, df)
+            priority_alerts.append(alert)
+        
+        # Sort by severity
+        priority_alerts.sort(key=lambda x: x['severity'], reverse=True)
+        
+        # Create timeline
+        alert_timeline = create_dynamic_alert_timeline(alert_data, df)
+        
+        # Calculate summary stats
+        anomaly_rate = len(alert_data) / len(df) * 100
+        summary_stats = {
+            'total_alerts': len(alert_data),
+            'safe_days': len(df) - len(alert_data),
+            'anomaly_rate': anomaly_rate
+        }
+        
+        return {
+            'priority_alerts': priority_alerts,
+            'alert_timeline': alert_timeline,
+            'summary_stats': summary_stats
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in dynamic intelligent alerts: {e}")
+        return None
+
+
+def analyze_dynamic_intelligent_safety_factors(df, meaningful_features):
+    """Analyze safety factors using dynamic data"""
+    try:
+        # Calculate meaningful correlations
+        feature_matrix = df[meaningful_features].copy()
+        for col in meaningful_features:
+            feature_matrix[col] = feature_matrix[col].fillna(feature_matrix[col].median())
+        
+        correlation_matrix = feature_matrix.corr()
+        
+        # Create safety target for factor analysis
+        safety_target = create_intelligent_safety_target(df, meaningful_features)
+        
+        if safety_target is None:
+            return None
+        
+        # Calculate factor rankings based on correlation with safety
+        factor_rankings = []
+        for feature in meaningful_features:
+            try:
+                feature_values = feature_matrix[feature]
+                if len(feature_values.unique()) > 1:  # Only if feature has variance
+                    correlation_with_safety = np.corrcoef(feature_values, safety_target)[0, 1]
+                    if not np.isnan(correlation_with_safety):
+                        impact_score = abs(correlation_with_safety)
+                        
+                        factor_rankings.append({
+                            'factor_name': make_feature_friendly(feature),
+                            'impact_score': impact_score,
+                            'correlation': correlation_with_safety
+                        })
+            except:
+                continue
+        
+        factor_rankings_df = pd.DataFrame(factor_rankings)
+        if not factor_rankings_df.empty:
+            factor_rankings_df = factor_rankings_df.sort_values('impact_score', ascending=True)
+        
+        # Find smart correlations between meaningful factors
+        smart_correlations = find_dynamic_smart_correlations(correlation_matrix, meaningful_features)
+        
+        # Generate key insights
+        key_insights = generate_dynamic_factor_insights(factor_rankings_df, df, meaningful_features)
+        
+        return {
+            'factor_rankings': factor_rankings_df,
+            'smart_correlations': smart_correlations,
+            'key_insights': key_insights,
+            'correlation_matrix': correlation_matrix
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in safety factors analysis: {e}")
+        return None
+
+
+def convert_predictions_to_safety_scores(predictions):
+    """Convert model predictions to friendly 1-10 safety scores"""
+    if len(predictions) == 0:
+        return np.array([5.0])
     
-    return None, None
+    # Normalize predictions to 0-1 range
+    min_pred = predictions.min()
+    max_pred = predictions.max()
+    
+    if max_pred > min_pred:
+        normalized = (predictions - min_pred) / (max_pred - min_pred)
+    else:
+        normalized = np.ones_like(predictions) * 0.5
+    
+    # Convert to 1-10 scale
+    safety_scores = 1 + (normalized * 9)
+    return safety_scores
 
 
 def make_feature_friendly(feature_name):
@@ -192,213 +503,245 @@ def make_feature_friendly(feature_name):
         'popularity_rating': '⭐ Route Popularity',
         'avg_duration': '⏱️ Ride Duration',
         'distance_km': '📏 Distance',
-        'severity_score': '🔥 Severity Level',
-        'avg_lateral_movement': '↩️ Lateral Movement',
-        'days_active': '📅 Days Active',
-        'distinct_cyclists': '👥 Unique Cyclists'
+        'severity_score': '🔥 Severity Level'
     }
     
     return friendly_names.get(feature_name, feature_name.replace('_', ' ').title())
 
 
-def render_safety_predictions(routes_df, braking_df, swerving_df, time_series_df, options):
-    """Render safety prediction analysis in simple terms with real computations"""
-    st.markdown("### 🎯 Where You Might Need Extra Caution")
-    st.markdown("Our AI predicts areas where you should be extra careful based on your riding history.")
+def find_dynamic_smart_correlations(correlation_matrix, meaningful_features):
+    """Find meaningful correlations between factors using dynamic data"""
+    correlations = []
     
-    primary_df, data_source = choose_best_dataset_for_analysis([
-        (time_series_df, "daily rides"),
-        (routes_df, "routes"),
-        (braking_df, "braking events"),
-        (swerving_df, "swerving events")
-    ], options['min_data_needed'])
-    
-    if primary_df is None or len(primary_df) < options['min_data_needed']:
-        st.info(f"We need at least {options['min_data_needed']} rides to make good predictions. Keep cycling and check back!")
-        return
-    
-    meaningful_features = get_meaningful_features(primary_df)
-    
-    if len(meaningful_features) < 2:
-        st.info("We need more cycling metrics to make safety predictions. Try adding more detailed ride data!")
-        return
-    
-    prediction_results = create_real_safety_predictions(primary_df, meaningful_features)
-    
-    if prediction_results is None:
-        st.warning("We couldn't create safety predictions from your current data. Try adding more ride data!")
-        return
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 📊 What Matters Most for Your Safety")
-        
-        importance_data = prediction_results['feature_importance']
-        
-        fig = px.bar(
-            importance_data.head(8),
-            x='importance',
-            y='friendly_name',
-            orientation='h',
-            title="What Affects Your Safety Most",
-            labels={'importance': 'Impact on Safety', 'friendly_name': ''},
-            color='importance',
-            color_continuous_scale='Reds'
-        )
-        fig.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.info(f"📊 Analysis based on {len(primary_df)} records from your {data_source} data")
-    
-    with col2:
-        st.markdown("#### 🎲 Your Safety Score Distribution")
-        
-        predictions = prediction_results['predictions']
-        safety_scores = convert_to_friendly_scores(predictions)
-        
-        fig = px.histogram(
-            x=safety_scores,
-            nbins=15,
-            title="Your Safety Scores Across Different Situations",
-            labels={'x': 'Safety Score (1=Risky, 10=Very Safe)', 'y': 'Number of Situations'},
-            color_discrete_sequence=['#2E86AB']
-        )
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        avg_score = np.mean(safety_scores)
-        model_quality = "Excellent" if prediction_results['r2_score'] > 0.7 else "Good" if prediction_results['r2_score'] > 0.4 else "Fair"
-        
-        col2a, col2b = st.columns(2)
-        with col2a:
-            st.metric("Your Average Safety Score", f"{avg_score:.1f}/10", help="Higher scores mean safer riding conditions")
-        with col2b:
-            st.metric("Prediction Quality", model_quality, help="How reliable our predictions are")
-    
-    generate_friendly_safety_insight(prediction_results, safety_scores, data_source)
-
-
-def create_real_safety_predictions(df, meaningful_features):
-    """Create safety predictions with real ML but friendly output"""
     try:
-        X = df[meaningful_features].copy()
+        for i in range(len(meaningful_features)):
+            for j in range(i+1, len(meaningful_features)):
+                corr_val = correlation_matrix.iloc[i, j]
+                
+                if not np.isnan(corr_val) and abs(corr_val) > 0.3:  # Only meaningful correlations
+                    factor1 = make_feature_friendly(meaningful_features[i])
+                    factor2 = make_feature_friendly(meaningful_features[j])
+                    
+                    relationship_type = "Positive" if corr_val > 0 else "Negative"
+                    
+                    correlations.append({
+                        'factor_pair': f"{factor1} ↔ {factor2}",
+                        'factor_1_impact': abs(corr_val),
+                        'factor_2_impact': abs(corr_val),
+                        'connection_strength': abs(corr_val),
+                        'relationship_type': relationship_type
+                    })
         
-        for col in meaningful_features:
-            X[col] = X[col].fillna(X[col].median())
+        return pd.DataFrame(correlations).sort_values('connection_strength', ascending=False) if correlations else pd.DataFrame()
         
-        safety_target = compute_real_safety_target(df, meaningful_features)
+    except Exception as e:
+        logger.error(f"Error finding correlations: {e}")
+        return pd.DataFrame()
+
+
+def generate_dynamic_intelligent_alert_description(row, meaningful_features, full_df):
+    """Generate intelligent, contextual alert descriptions using dynamic data"""
+    try:
+        date_str = row.get('date', datetime.now().strftime('%Y-%m-%d'))
+        if pd.isna(date_str):
+            date_str = "Recent"
+        else:
+            date_str = str(date_str)[:10]  # Format date
         
-        if safety_target is None:
-            return None
+        # Analyze what made this record unusual compared to the dataset
+        alert_reasons = []
+        severity_factors = []
         
-        X_train, X_test, y_train, y_test = train_test_split(X, safety_target, test_size=0.3, random_state=42)
+        for feature in meaningful_features:
+            if feature in row.index and feature in full_df.columns:
+                row_value = row[feature]
+                if pd.isna(row_value):
+                    continue
+                    
+                feature_data = full_df[feature].dropna()
+                
+                if len(feature_data) > 1:
+                    mean_val = feature_data.mean()
+                    std_val = feature_data.std()
+                    
+                    if std_val > 0:
+                        z_score = abs((row_value - mean_val) / std_val)
+                        severity_factors.append(z_score)
+                        
+                        if z_score > 1.5:  # Significantly different
+                            direction = "much higher" if row_value > mean_val else "much lower"
+                            friendly_name = make_feature_friendly(feature).replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
+                            alert_reasons.append(f"{direction} {friendly_name.lower()} ({row_value:.1f} vs typical {mean_val:.1f})")
         
-        model = RandomForestRegressor(n_estimators=100, random_state=42, max_depth=6)
-        model.fit(X_train, y_train)
+        # Calculate severity based on how unusual the combination is
+        if severity_factors:
+            avg_z_score = np.mean(severity_factors)
+            severity = min(0.9, max(0.3, avg_z_score / 3))  # Scale to 0.3-0.9 range
+        else:
+            severity = 0.5
         
-        predictions = model.predict(X_test)
-        r2 = r2_score(y_test, predictions)
-        
-        feature_importance = pd.DataFrame({
-            'feature': meaningful_features,
-            'importance': model.feature_importances_,
-            'friendly_name': [make_feature_friendly(f) for f in meaningful_features]
-        }).sort_values('importance', ascending=True)
+        # Create alert description
+        if len(alert_reasons) > 0:
+            main_reason = alert_reasons[0]
+            title = "Unusual Riding Conditions"
+            if len(alert_reasons) > 1:
+                description = f"Detected {main_reason} and {len(alert_reasons)-1} other unusual factors"
+            else:
+                description = f"Detected {main_reason}"
+        else:
+            title = "Pattern Anomaly"
+            description = "Unusual combination of riding conditions detected"
         
         return {
-            'model': model,
-            'predictions': predictions,
-            'actual_scores': y_test,
-            'feature_importance': feature_importance,
-            'r2_score': r2,
-            'meaningful_features': meaningful_features
+            'date': date_str,
+            'title': title,
+            'description': description,
+            'severity': severity,
+            'factors': alert_reasons
         }
         
     except Exception as e:
-        logger.error(f"Error in safety predictions: {e}")
-        return None
+        logger.error(f"Error generating alert description: {e}")
+        return {
+            'date': datetime.now().strftime('%Y-%m-%d'),
+            'title': 'Safety Alert',
+            'description': 'Unusual pattern detected',
+            'severity': 0.5,
+            'factors': []
+        }
 
 
-def compute_real_safety_target(df, meaningful_features):
-    """Compute real safety target from meaningful data"""
+def create_dynamic_alert_timeline(alert_data, full_df):
+    """Create timeline of alerts using dynamic data"""
     try:
-        if 'incidents' in meaningful_features:
-            incidents = df['incidents'].fillna(df['incidents'].median())
-            max_incidents = incidents.max()
-            if max_incidents > 0:
-                return 1 - (incidents / max_incidents)
-            else:
-                return np.ones(len(incidents))
-        
-        elif 'avg_braking_events' in meaningful_features:
-            braking = df['avg_braking_events'].fillna(df['avg_braking_events'].median())
-            max_braking = braking.max()
-            if max_braking > 0:
-                return 1 - (braking / max_braking)
-            else:
-                return np.ones(len(braking))
-        
-        elif 'intensity' in meaningful_features:
-            intensity = df['intensity'].fillna(df['intensity'].median())
-            max_intensity = intensity.max()
-            if max_intensity > 0:
-                return 1 - (intensity / max_intensity)
-            else:
-                return np.ones(len(intensity))
-        
+        if 'date' in alert_data.columns and 'date' in full_df.columns:
+            # Create timeline with actual dates
+            alert_data_copy = alert_data.copy()
+            alert_data_copy['date'] = pd.to_datetime(alert_data_copy['date'])
+            
+            timeline = alert_data_copy.groupby(alert_data_copy['date'].dt.date).size().reset_index()
+            timeline.columns = ['date', 'alert_count']
+            
+            # Fill missing dates with 0 for the full date range
+            full_df_copy = full_df.copy()
+            full_df_copy['date'] = pd.to_datetime(full_df_copy['date'])
+            date_range = pd.date_range(
+                start=full_df_copy['date'].min().date(),
+                end=full_df_copy['date'].max().date(),
+                freq='D'
+            )
+            
+            full_timeline = pd.DataFrame({'date': date_range.date})
+            full_timeline = full_timeline.merge(timeline, on='date', how='left')
+            full_timeline['alert_count'] = full_timeline['alert_count'].fillna(0)
+            
+            return full_timeline
         else:
-            safety_components = []
+            # Create simple timeline
+            return pd.DataFrame({
+                'date': [datetime.now().date()],
+                'alert_count': [len(alert_data)]
+            })
             
-            if 'precipitation_mm' in meaningful_features:
-                precip = df['precipitation_mm'].fillna(0)
-                max_precip = precip.max() if precip.max() > 0 else 1
-                weather_safety = 1 - (precip / max_precip)
-                safety_components.append(weather_safety)
-            
-            if 'avg_speed' in meaningful_features:
-                speed = df['avg_speed'].fillna(df['avg_speed'].median())
-                speed_median = speed.median()
-                speed_range = speed.max() - speed.min()
-                if speed_range > 0:
-                    speed_safety = 1 - (np.abs(speed - speed_median) / speed_range)
-                    safety_components.append(speed_safety)
-            
-            if len(safety_components) > 0:
-                return np.mean(safety_components, axis=0)
-            else:
-                first_feature = df[meaningful_features[0]].fillna(df[meaningful_features[0]].median())
-                return (first_feature - first_feature.min()) / (first_feature.max() - first_feature.min())
+    except Exception as e:
+        logger.error(f"Error creating timeline: {e}")
+        return pd.DataFrame({'date': [datetime.now().date()], 'alert_count': [0]})
+
+
+def generate_dynamic_factor_insights(factor_rankings_df, df, meaningful_features):
+    """Generate key insights about safety factors using dynamic data"""
+    insights = {}
+    
+    try:
+        # Primary safety factor from actual rankings
+        if not factor_rankings_df.empty:
+            top_factor = factor_rankings_df.iloc[-1]['factor_name']
+            insights['primary_factor'] = top_factor.replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').replace('🌧️', '').strip()
+        else:
+            insights['primary_factor'] = 'Speed'
+        
+        # Determine optimal conditions from actual data
+        optimal_conditions = "Clear Weather"  # Default
+        
+        if 'temperature' in meaningful_features and len(df) > 1:
+            # Check if incidents correlate with temperature
+            if 'incidents' in meaningful_features:
+                temp_incident_corr = df[['temperature', 'incidents']].corr().iloc[0, 1]
+                if not np.isnan(temp_incident_corr):
+                    if temp_incident_corr < -0.2:  # Negative correlation = higher temp, fewer incidents
+                        optimal_conditions = "Warm Weather"
+                    elif temp_incident_corr > 0.2:
+                        optimal_conditions = "Cool Weather"
+        
+        if 'precipitation_mm' in meaningful_features and len(df) > 1:
+            avg_precip = df['precipitation_mm'].mean()
+            if avg_precip < 1:
+                optimal_conditions = "Dry Conditions"
+            elif 'incidents' in meaningful_features:
+                precip_incident_corr = df[['precipitation_mm', 'incidents']].corr().iloc[0, 1]
+                if not np.isnan(precip_incident_corr) and precip_incident_corr > 0.2:
+                    optimal_conditions = "Dry Conditions"
+        
+        insights['optimal_conditions'] = optimal_conditions
+        
+        # Calculate real improvement potential
+        improvement_potential = 15  # Default
+        
+        if 'incidents' in meaningful_features and len(df) > 1:
+            incidents = df['incidents']
+            min_incidents = incidents.quantile(0.1)
+            avg_incidents = incidents.mean()
+            if avg_incidents > 0:
+                potential = ((avg_incidents - min_incidents) / avg_incidents) * 100
+                improvement_potential = max(5, min(50, potential))
+        elif 'avg_braking_events' in meaningful_features and len(df) > 1:
+            braking = df['avg_braking_events']
+            min_braking = braking.quantile(0.1)
+            avg_braking = braking.mean()
+            if avg_braking > 0:
+                potential = ((avg_braking - min_braking) / avg_braking) * 100
+                improvement_potential = max(5, min(40, potential))
+        
+        insights['improvement_potential'] = improvement_potential
+        
+        return insights
         
     except Exception as e:
-        logger.error(f"Error computing safety target: {e}")
-        return None
+        logger.error(f"Error generating insights: {e}")
+        return {
+            'primary_factor': 'Speed',
+            'optimal_conditions': 'Clear Weather',
+            'improvement_potential': 20
+        }
 
 
-def convert_to_friendly_scores(predictions):
-    """Convert model predictions to friendly 1-10 safety scores"""
-    if len(predictions) > 0:
-        min_pred = predictions.min()
-        max_pred = predictions.max()
-        if max_pred > min_pred:
-            normalized = (predictions - min_pred) / (max_pred - min_pred)
-        else:
-            normalized = np.ones_like(predictions) * 0.5
-        
-        safety_scores = 1 + (normalized * 9)
-        return safety_scores
-    else:
-        return np.array([5.0])
+# Dynamic AI-Generated Insight Functions
 
-
-def generate_friendly_safety_insight(prediction_results, safety_scores, data_source):
-    """Generate friendly insight from real safety prediction results"""
+def generate_dynamic_safety_intelligence_insight(prediction_results, safety_scores, data_points):
+    """Generate AI insight for safety intelligence using dynamic data"""
     try:
         avg_score = np.mean(safety_scores)
-        model_quality = "excellent" if prediction_results['r2_score'] > 0.7 else "good" if prediction_results['r2_score'] > 0.4 else "developing"
+        accuracy = prediction_results['accuracy']
+def generate_dynamic_safety_intelligence_insight(prediction_results, safety_scores, data_points):
+    """Generate AI insight for safety intelligence using dynamic data"""
+    try:
+        avg_score = np.mean(safety_scores)
+        accuracy = prediction_results['accuracy']
         top_factors = prediction_results['feature_importance'].tail(3)['friendly_name'].tolist()
         top_factors_clean = [f.replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip() for f in top_factors]
         
+        # Determine model quality based on actual performance
+        if accuracy > 0.7:
+            model_quality = "excellent"
+            confidence = "high confidence"
+        elif accuracy > 0.4:
+            model_quality = "good"
+            confidence = "moderate confidence"
+        else:
+            model_quality = "developing"
+            confidence = "preliminary insights"
+        
+        # Determine safety profile based on actual scores
         if avg_score > 7:
             insight_tone = "excellent"
             improvement = "fine-tuning"
@@ -409,14 +752,20 @@ def generate_friendly_safety_insight(prediction_results, safety_scores, data_sou
             insight_tone = "developing"
             improvement = "improving"
         
+        # Get date range info
+        date_info = ""
+        if 'filter_start_date' in st.session_state and st.session_state.filter_start_date:
+            date_info = " for the selected period"
+        
         insight_text = f"""
-        🎯 **Your safety profile is {insight_tone}!** Based on {len(prediction_results['predictions'])} analyzed scenarios from your {data_source}, 
+        🎯 **Your safety profile is {insight_tone}!** Based on {data_points} analyzed scenarios{date_info}, 
         your average safety score is **{avg_score:.1f}/10**. 
         
         🔍 **Key Finding**: Your top 3 safety factors are **{', '.join(top_factors_clean)}**. 
         Focus on {improvement} these areas for maximum safety impact.
         
-        💡 **Smart Tip**: Our {model_quality} prediction model shows that optimizing your top factor could significantly boost your safety!
+        💡 **AI Assessment**: Our {model_quality} prediction model (accuracy: {accuracy:.1%}) shows {confidence} in these insights. 
+        {"Small improvements in your top factor could boost safety significantly!" if accuracy > 0.5 else "Collect more data for stronger predictions."}
         """
         
         st.markdown(f"""
@@ -429,239 +778,37 @@ def generate_friendly_safety_insight(prediction_results, safety_scores, data_sou
         logger.error(f"Error generating safety insight: {e}")
 
 
-def render_cycling_patterns(routes_df, time_series_df, options):
-    """Render cycling behavior analysis in simple terms with real computations"""
-    st.markdown("### 👥 Your Unique Cycling Style")
-    st.markdown("See how your cycling patterns compare to different riding styles.")
-    
-    primary_df, data_source = choose_best_dataset_for_analysis([
-        (time_series_df, "daily rides"),
-        (routes_df, "routes")
-    ], options['min_data_needed'])
-    
-    if primary_df is None or len(primary_df) < options['min_data_needed']:
-        st.info("We need more ride data to identify your cycling patterns. Keep tracking your rides!")
-        return
-    
-    meaningful_features = get_meaningful_features(primary_df)
-    
-    if len(meaningful_features) < 2:
-        st.info("We need more cycling metrics to identify your patterns. Try adding more detailed data!")
-        return
-    
-    pattern_results = analyze_real_cycling_patterns(primary_df, meaningful_features, options['n_clusters'])
-    
-    if pattern_results is None:
-        st.warning("We couldn't identify clear patterns in your cycling data yet.")
-        return
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 🏷️ Your Cycling Types")
-        
-        cluster_summary = pattern_results['cluster_summary']
-        persona_names = pattern_results['persona_names']
-        
-        cluster_data = pd.DataFrame({
-            'Riding Style': [persona_names.get(i, f"Style {i}") for i in cluster_summary.index],
-            'Number of Rides': cluster_summary.values,
-            'Percentage': (cluster_summary.values / cluster_summary.sum() * 100)
-        })
-        
-        fig = px.pie(
-            cluster_data,
-            values='Number of Rides',
-            names='Riding Style',
-            title="How You Spend Your Cycling Time",
-            color_discrete_sequence=px.colors.qualitative.Set3
-        )
-        fig.update_traces(textposition='inside', textinfo='percent+label')
-        fig.update_layout(height=400)
-        st.plotly_chart(fig, use_container_width=True)
-        
-        pattern_quality = get_friendly_pattern_quality(pattern_results['silhouette_score'])
-        st.metric("Pattern Clarity", pattern_quality, help="How distinct your riding patterns are")
-    
-    with col2:
-        st.markdown("#### 📈 Your Pattern Characteristics")
-        
-        cluster_characteristics = pattern_results['cluster_characteristics']
-        dominant_cluster = cluster_summary.idxmax()
-        
-        st.markdown(f"**Your Main Style: {persona_names.get(dominant_cluster, f'Style {dominant_cluster}')}**")
-        st.markdown(f"*{cluster_summary[dominant_cluster]} rides ({cluster_summary[dominant_cluster]/cluster_summary.sum()*100:.0f}% of your cycling)*")
-        
-        if dominant_cluster in cluster_characteristics:
-            chars = cluster_characteristics[dominant_cluster]
-            characteristic_list = create_friendly_characteristics(chars, meaningful_features)
-            
-            for char in characteristic_list[:4]:
-                st.markdown(f"• {char}")
-        
-        st.markdown("---")
-        st.info(f"📊 Analysis based on {len(primary_df)} records from your {data_source}")
-    
-    generate_friendly_pattern_insight(pattern_results, data_source)
-
-
-def analyze_real_cycling_patterns(df, meaningful_features, n_clusters):
-    """Analyze cycling patterns with real computation but friendly presentation"""
+def generate_dynamic_cycling_dna_insight(pattern_results, data_points):
+    """Generate AI insight for cycling DNA using dynamic data"""
     try:
-        X = df[meaningful_features].copy()
+        if 'persona_distribution' in pattern_results and not pattern_results['persona_distribution'].empty:
+            top_persona_row = pattern_results['persona_distribution'].loc[
+                pattern_results['persona_distribution']['percentage'].idxmax()
+            ]
+            top_persona = top_persona_row['persona']
+            percentage = top_persona_row['percentage']
+        else:
+            top_persona = "Balanced Rider"
+            percentage = 60
         
-        for col in meaningful_features:
-            X[col] = X[col].fillna(X[col].median())
+        traits = pattern_results.get('personality_traits', [])
+        trait_summary = traits[0] if traits else "You have a unique cycling style"
         
-        scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        silhouette_score = pattern_results.get('silhouette_score', 0)
+        pattern_quality = "very distinct" if silhouette_score > 0.5 else "moderately distinct" if silhouette_score > 0.3 else "emerging"
         
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
-        clusters = kmeans.fit_predict(X_scaled)
-        
-        silhouette_avg = silhouette_score(X_scaled, clusters)
-        
-        cluster_characteristics = {}
-        for cluster_id in range(n_clusters):
-            cluster_mask = clusters == cluster_id
-            cluster_data = X[cluster_mask]
-            
-            if len(cluster_data) > 0:
-                characteristics = {}
-                for feature in meaningful_features:
-                    feature_data = cluster_data[feature]
-                    characteristics[feature] = {
-                        'mean': feature_data.mean(),
-                        'std': feature_data.std(),
-                        'relative_to_overall': feature_data.mean() / X[feature].mean() if X[feature].mean() != 0 else 1
-                    }
-                cluster_characteristics[cluster_id] = characteristics
-        
-        persona_names = create_real_persona_names(cluster_characteristics, meaningful_features)
-        
-        unique_clusters, cluster_counts = np.unique(clusters, return_counts=True)
-        cluster_summary = pd.Series(cluster_counts, index=unique_clusters)
-        
-        return {
-            'clusters': clusters,
-            'cluster_summary': cluster_summary,
-            'cluster_characteristics': cluster_characteristics,
-            'persona_names': persona_names,
-            'silhouette_score': silhouette_avg,
-            'n_patterns': n_clusters
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in pattern analysis: {e}")
-        return None
-
-
-def create_real_persona_names(cluster_characteristics, meaningful_features):
-    """Create persona names based on real cluster characteristics"""
-    persona_names = {}
-    
-    for cluster_id, characteristics in cluster_characteristics.items():
-        persona_name = "🚴‍♀️ Balanced Rider"
-        
-        if 'avg_speed' in characteristics:
-            speed_ratio = characteristics['avg_speed']['relative_to_overall']
-            if speed_ratio > 1.2:
-                persona_name = "⚡ Speed Enthusiast"
-            elif speed_ratio < 0.8:
-                persona_name = "🐌 Leisurely Cruiser"
-        
-        if 'incidents' in characteristics:
-            incident_ratio = characteristics['incidents']['relative_to_overall']
-            if incident_ratio > 1.3:
-                persona_name = "🚨 High Activity Rider"
-            elif incident_ratio < 0.7:
-                persona_name = "🛡️ Safety Champion"
-        
-        if 'avg_braking_events' in characteristics:
-            braking_ratio = characteristics['avg_braking_events']['relative_to_overall']
-            if braking_ratio > 1.2:
-                persona_name = "🚦 Cautious Commuter"
-            elif braking_ratio < 0.8:
-                persona_name = "🌊 Smooth Operator"
-        
-        if 'temperature' in characteristics:
-            temp_ratio = characteristics['temperature']['relative_to_overall']
-            if temp_ratio < 0.8:
-                persona_name = "❄️ Winter Warrior"
-            elif temp_ratio > 1.2:
-                persona_name = "☀️ Summer Cyclist"
-        
-        persona_names[cluster_id] = persona_name
-    
-    return persona_names
-
-
-def get_friendly_pattern_quality(silhouette_score):
-    """Convert silhouette score to friendly quality description"""
-    if silhouette_score > 0.6:
-        return "Very Clear"
-    elif silhouette_score > 0.4:
-        return "Clear"
-    elif silhouette_score > 0.2:
-        return "Moderate"
-    else:
-        return "Emerging"
-
-
-def create_friendly_characteristics(characteristics, meaningful_features):
-    """Create friendly descriptions of cluster characteristics"""
-    descriptions = []
-    
-    try:
-        feature_priority = ['avg_speed', 'incidents', 'avg_braking_events', 'temperature', 'precipitation_mm']
-        
-        for feature in feature_priority:
-            if feature in characteristics and feature in meaningful_features:
-                stats = characteristics[feature]
-                relative_ratio = stats['relative_to_overall']
-                friendly_name = make_feature_friendly(feature).replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
-                
-                if relative_ratio > 1.15:
-                    descriptions.append(f"Higher than average {friendly_name.lower()}")
-                elif relative_ratio < 0.85:
-                    descriptions.append(f"Lower than average {friendly_name.lower()}")
-                elif 0.95 <= relative_ratio <= 1.05:
-                    descriptions.append(f"Typical {friendly_name.lower()}")
-        
-        if len(descriptions) < 2:
-            descriptions.extend([
-                "Consistent riding patterns",
-                "Steady cycling behavior",
-                "Developing riding style"
-            ])
-        
-        return descriptions[:4]
-        
-    except Exception as e:
-        logger.error(f"Error creating characteristics: {e}")
-        return ["Unique cycling style"]
-
-
-def generate_friendly_pattern_insight(pattern_results, data_source):
-    """Generate friendly insight from real pattern analysis"""
-    try:
-        cluster_summary = pattern_results['cluster_summary']
-        persona_names = pattern_results['persona_names']
-        silhouette_score = pattern_results['silhouette_score']
-        
-        dominant_cluster = cluster_summary.idxmax()
-        dominant_persona = persona_names.get(dominant_cluster, "Balanced Rider")
-        dominant_percentage = (cluster_summary[dominant_cluster] / cluster_summary.sum()) * 100
-        
-        pattern_clarity = get_friendly_pattern_quality(silhouette_score)
+        # Get date range info
+        date_info = ""
+        if 'filter_start_date' in st.session_state and st.session_state.filter_start_date:
+            date_info = " during the selected period"
         
         insight_text = f"""
-        🧬 **You're primarily a {dominant_persona}** - this represents **{dominant_percentage:.0f}%** of your riding style!
+        🧬 **You're primarily a {top_persona}** - this represents **{percentage:.0f}%** of your riding style{date_info}!
         
-        🎭 **Pattern Analysis**: We found {len(cluster_summary)} distinct riding patterns in your {data_source} data. 
-        Your patterns have **{pattern_clarity.lower()}** separation, meaning {"your riding style is very consistent" if pattern_clarity == "Very Clear" else "your patterns are well-defined" if pattern_clarity == "Clear" else "your style is still developing"}.
+        🎭 **Pattern Analysis**: We found {pattern_results['n_patterns']} {pattern_quality} riding patterns from {data_points} data points. 
+        **{trait_summary}** This suggests you prioritize {"safety and consistency" if "safety" in trait_summary.lower() or "smooth" in trait_summary.lower() else "performance and efficiency" if "speed" in trait_summary.lower() else "adaptability and awareness" if "responsive" in trait_summary.lower() else "comfort and enjoyment"}.
         
-        📈 **Evolution**: {"Your cycling patterns are stable and predictable" if pattern_clarity in ["Very Clear", "Clear"] else "Keep riding to see clearer patterns emerge"}!
+        📈 **Pattern Evolution**: {"Your cycling patterns are very consistent and predictable" if pattern_quality == "very distinct" else "Your patterns are well-defined and stable" if pattern_quality == "moderately distinct" else "Your patterns are still developing - more data will reveal clearer clusters"}!
         """
         
         st.markdown(f"""
@@ -671,247 +818,48 @@ def generate_friendly_pattern_insight(pattern_results, data_source):
         """, unsafe_allow_html=True)
         
     except Exception as e:
-        logger.error(f"Error generating pattern insight: {e}")
+        logger.error(f"Error generating DNA insight: {e}")
 
 
-def render_safety_alerts(time_series_df, braking_df, swerving_df, options):
-    """Render anomaly detection in simple terms with real computations"""
-    st.markdown("### ⚠️ Unusual Safety Events")
-    st.markdown("Times when something unusual happened during your rides that might indicate safety concerns.")
-    
-    primary_df, data_source = choose_best_dataset_for_analysis([
-        (time_series_df, "daily rides"),
-        (braking_df, "braking events"),
-        (swerving_df, "swerving events")
-    ], options['min_data_needed'])
-    
-    if primary_df is None or len(primary_df) < options['min_data_needed']:
-        st.info("We need more ride data to detect unusual safety events.")
-        return
-    
-    meaningful_features = get_meaningful_features(primary_df)
-    
-    if len(meaningful_features) < 2:
-        st.info("We need more safety metrics to detect unusual patterns!")
-        return
-    
-    alert_results = detect_real_safety_alerts(primary_df, meaningful_features, options)
-    
-    if alert_results is None:
-        st.warning("We couldn't detect any unusual patterns in your data.")
-        return
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 🚨 Recent Safety Alerts")
-        
-        anomalies_df = alert_results['anomalies_df']
-        
-        if len(anomalies_df) > 0:
-            for i, (_, alert_row) in enumerate(anomalies_df.head(5).iterrows()):
-                alert_description = create_friendly_alert_description(alert_row, primary_df, meaningful_features)
-                severity_emoji = get_severity_emoji(alert_description['severity'])
-                
-                st.markdown(f"""
-                **{alert_description['date']}** - {severity_emoji} {alert_description['priority']}
-                
-                {alert_description['description']}
-                """)
-                if i < min(4, len(anomalies_df) - 1):
-                    st.markdown("---")
-        else:
-            st.success("🎉 No recent safety alerts! Your rides have been consistently safe.")
-        
-        anomaly_rate = len(anomalies_df) / len(primary_df) * 100
-        st.metric("Alert Rate", f"{anomaly_rate:.1f}%", help="Percentage of rides with safety alerts")
-    
-    with col2:
-        st.markdown("#### 📊 Alert Patterns")
-        
-        if 'date' in primary_df.columns:
-            timeline_data = create_friendly_alert_timeline(primary_df, alert_results)
-            
-            if timeline_data is not None:
-                fig = px.line(
-                    timeline_data,
-                    x='date',
-                    y='alert_count',
-                    title="Safety Alerts Over Time",
-                    labels={'alert_count': 'Number of Alerts', 'date': 'Date'},
-                    color_discrete_sequence=['#FF6B6B']
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-        
-        total_records = len(primary_df)
-        safe_records = total_records - len(anomalies_df)
-        
-        col2a, col2b = st.columns(2)
-        with col2a:
-            st.metric("Total Alerts", len(anomalies_df), help="Number of unusual events detected")
-        with col2b:
-            st.metric("Safe Records", safe_records, help="Number of normal, safe rides")
-    
-    generate_friendly_alert_insight(alert_results, data_source)
-
-
-def detect_real_safety_alerts(df, meaningful_features, options):
-    """Detect real anomalies but present in friendly terms"""
+def generate_dynamic_smart_alerts_insight(alert_results, data_points):
+    """Generate AI insight for smart alerts using dynamic data"""
     try:
-        X = df[meaningful_features].copy()
+        total_alerts = alert_results['summary_stats'].get('total_alerts', 0)
+        safe_days = alert_results['summary_stats'].get('safe_days', 0)
+        anomaly_rate = alert_results['summary_stats'].get('anomaly_rate', 0)
         
-        for col in meaningful_features:
-            X[col] = X[col].fillna(X[col].median())
-        
-        iso_forest = IsolationForest(
-            contamination=options['anomaly_contamination'],
-            random_state=42,
-            n_estimators=100
-        )
-        
-        anomaly_labels = iso_forest.fit_predict(X)
-        anomaly_scores = iso_forest.decision_function(X)
-        
-        df_with_scores = df.copy()
-        df_with_scores['anomaly_label'] = anomaly_labels
-        df_with_scores['anomaly_score'] = anomaly_scores
-        
-        anomalies_df = df_with_scores[df_with_scores['anomaly_label'] == -1].copy()
-        
-        return {
-            'anomalies_df': anomalies_df,
-            'anomaly_scores': anomaly_scores,
-            'total_anomalies': len(anomalies_df),
-            'total_records': len(df)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in safety alert detection: {e}")
-        return None
-
-
-def create_friendly_alert_description(alert_row, full_df, meaningful_features):
-    """Create friendly description of why this row is anomalous"""
-    try:
-        unusual_factors = []
-        
-        for feature in meaningful_features:
-            if feature in alert_row.index and feature in full_df.columns:
-                alert_value = alert_row[feature]
-                feature_data = full_df[feature].dropna()
-                
-                if len(feature_data) > 1:
-                    mean_val = feature_data.mean()
-                    std_val = feature_data.std()
-                    
-                    if std_val > 0:
-                        z_score = abs((alert_value - mean_val) / std_val)
-                        
-                        if z_score > 1.5:
-                            direction = "much higher" if alert_value > mean_val else "much lower"
-                            friendly_name = make_feature_friendly(feature).replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
-                            unusual_factors.append(f"{direction} {friendly_name.lower()}")
-        
-        if unusual_factors:
-            main_factor = unusual_factors[0]
-            if len(unusual_factors) > 1:
-                description = f"Unusual conditions detected: {main_factor} and {len(unusual_factors)-1} other factors"
-            else:
-                description = f"Unusual conditions detected: {main_factor}"
-        else:
-            description = "Unusual combination of riding conditions detected"
-        
-        severity_score = abs(alert_row.get('anomaly_score', -0.5))
-        if severity_score > 0.6:
-            severity = 0.8
-            priority = "High Priority"
-        elif severity_score > 0.3:
-            severity = 0.5
-            priority = "Medium Priority"
-        else:
-            severity = 0.3
-            priority = "Low Priority"
-        
-        date_str = alert_row.get('date', datetime.now().strftime('%Y-%m-%d'))
-        if pd.isna(date_str):
-            date_str = "Recent"
-        
-        return {
-            'date': str(date_str),
-            'description': description,
-            'severity': severity,
-            'priority': priority,
-            'factors': unusual_factors
-        }
-        
-    except Exception as e:
-        logger.error(f"Error creating alert description: {e}")
-        return {
-            'date': 'Recent',
-            'description': 'Unusual pattern detected',
-            'severity': 0.5,
-            'priority': 'Medium Priority',
-            'factors': []
-        }
-
-
-def create_friendly_alert_timeline(df, alert_results):
-    """Create friendly timeline from real data"""
-    try:
-        if 'date' not in df.columns:
-            return None
-        
-        df_timeline = df.copy()
-        df_timeline['date'] = pd.to_datetime(df_timeline['date'])
-        df_timeline['anomaly_flag'] = alert_results['anomaly_scores'] < np.percentile(alert_results['anomaly_scores'], 5)
-        
-        timeline = df_timeline.groupby(df_timeline['date'].dt.date)['anomaly_flag'].sum().reset_index()
-        timeline.columns = ['date', 'alert_count']
-        
-        return timeline
-        
-    except Exception as e:
-        logger.error(f"Error creating timeline: {e}")
-        return None
-
-
-def get_severity_emoji(severity):
-    """Get emoji based on severity score"""
-    if severity > 0.7:
-        return "🔴 High"
-    elif severity > 0.4:
-        return "🟡 Medium"
-    else:
-        return "🟢 Low"
-
-
-def generate_friendly_alert_insight(alert_results, data_source):
-    """Generate friendly insight from real anomaly detection"""
-    try:
-        total_records = alert_results['total_records']
-        anomalies_count = alert_results['total_anomalies']
-        anomaly_rate = (anomalies_count / total_records) * 100
-        
-        if anomaly_rate == 0:
-            alert_status = "🎉 **Outstanding safety record!** No unusual events detected."
+        # Determine alert status based on actual data
+        if total_alerts == 0:
+            alert_status = "🎉 **Outstanding safety record!** No alerts detected in the analyzed period."
             advice = "Keep up your excellent riding habits!"
-        elif anomaly_rate <= 3:
-            alert_status = f"✅ **Great safety performance!** Only {anomalies_count} unusual events out of {total_records} records."
+            trend_assessment = "exceptional consistency"
+        elif anomaly_rate <= 5:
+            alert_status = f"✅ **Great safety performance!** Only {total_alerts} alerts out of {data_points} records ({anomaly_rate:.1f}%)."
             advice = "You're maintaining excellent safety practices."
-        elif anomaly_rate <= 8:
-            alert_status = f"⚠️ **{anomalies_count} unusual events detected** out of {total_records} records ({anomaly_rate:.1f}%)."
-            advice = "Consider reviewing the unusual events to identify improvement opportunities."
+            trend_assessment = "excellent consistency"
+        elif anomaly_rate <= 15:
+            alert_status = f"⚠️ **{total_alerts} alerts detected** out of {data_points} records ({anomaly_rate:.1f}%)."
+            advice = "Consider reviewing the alert patterns to identify improvement opportunities."
+            trend_assessment = "good consistency with room for optimization"
         else:
-            alert_status = f"🔍 **{anomalies_count} unusual events detected** - higher than typical."
-            advice = "Review patterns during unusual events for safety optimization opportunities."
+            alert_status = f"🔍 **{total_alerts} alerts detected** - higher than typical ({anomaly_rate:.1f}% anomaly rate)."
+            advice = "Focus on identifying and addressing the key risk factors."
+            trend_assessment = "variable patterns with optimization opportunities"
+        
+        # Get date range info
+        date_info = ""
+        if 'filter_start_date' in st.session_state and st.session_state.filter_start_date:
+            date_info = " during the selected time period"
         
         insight_text = f"""
         {alert_status}
         
-        🧠 **AI Assessment**: {advice} Analysis of your {data_source} shows {"exceptional consistency" if anomaly_rate <= 3 else "good consistency" if anomaly_rate <= 8 else "room for pattern optimization"}.
+        🔥 **Safe Records**: {safe_days} out of {data_points} records{date_info} were flagged as safe! 
         
-        📊 **Pattern Quality**: {"Your riding conditions are very predictable" if anomaly_rate <= 3 else "Your conditions show normal variation" if anomaly_rate <= 8 else "Your conditions are quite variable - this is normal for diverse cycling"}.
+        🧠 **AI Assessment**: {advice} Analysis shows {trend_assessment}. 
+        {"Your risk management is excellent" if anomaly_rate <= 5 else "Your safety patterns are developing well" if anomaly_rate <= 15 else "There are clear opportunities to improve safety consistency"}.
+        
+        📊 **Data Quality**: {"Strong statistical significance with reliable patterns" if data_points > 30 else "Moderate data size - trends are emerging" if data_points > 10 else "Limited data - collect more for stronger insights"}.
         """
         
         st.markdown(f"""
@@ -921,249 +869,45 @@ def generate_friendly_alert_insight(alert_results, data_source):
         """, unsafe_allow_html=True)
         
     except Exception as e:
-        logger.error(f"Error generating alert insight: {e}")
+        logger.error(f"Error generating alerts insight: {e}")
 
 
-def render_safety_factors(routes_df, braking_df, swerving_df, time_series_df, options):
-    """Render factor analysis in simple terms with real computations"""
-    st.markdown("### 📊 What Makes Your Rides Safer")
-    st.markdown("Discover which factors have the biggest impact on your cycling safety.")
-    
-    factor_results = analyze_real_safety_factors([
-        (time_series_df, "daily rides"),
-        (routes_df, "routes"),
-        (braking_df, "braking events"),
-        (swerving_df, "swerving events")
-    ])
-    
-    if factor_results is None:
-        st.info("We need more data to analyze what affects your safety.")
-        return
-    
-    key_insights = factor_results['key_insights']
-    
-    st.markdown("#### 💡 Key Insights About Your Safety")
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Most Important Factor", key_insights['top_factor'], help="Factor with strongest impact on your safety")
-    
-    with col2:
-        st.metric("Best Conditions", key_insights['best_conditions'], help="When you typically have the safest rides")
-    
-    with col3:
-        st.metric("Safety Opportunity", f"+{key_insights['improvement_potential']:.0f}% safer", help="Potential safety improvement under optimal conditions")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("#### 🔗 How Factors Connect")
-        
-        correlations = factor_results['meaningful_correlations']
-        
-        if not correlations.empty:
-            fig = px.bar(
-                correlations.head(8),
-                x='strength',
-                y='relationship_friendly',
-                orientation='h',
-                title="Strongest Factor Relationships",
-                labels={'strength': 'Connection Strength', 'relationship_friendly': ''},
-                color='strength',
-                color_continuous_scale='Viridis'
-            )
-            fig.update_layout(height=400, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+def generate_dynamic_safety_factors_insight(factor_results, data_points):
+    """Generate AI insight for safety factors using dynamic data"""
+    try:
+        if not factor_results['factor_rankings'].empty:
+            top_factor_row = factor_results['factor_rankings'].iloc[-1]
+            top_factor = top_factor_row['factor_name']
+            top_impact = top_factor_row['impact_score']
         else:
-            st.info("Your safety factors appear to work independently - no strong connections found!")
-    
-    with col2:
-        st.markdown("#### 🏆 Factor Impact Ranking")
+            top_factor = "Speed Management"
+            top_impact = 0.6
         
-        factor_rankings = factor_results['factor_rankings']
-        
-        fig = px.bar(
-            factor_rankings.head(8),
-            x='impact_score',
-            y='factor_friendly',
-            orientation='h',
-            title="Factors Ranked by Safety Impact",
-            labels={'impact_score': 'Safety Impact', 'factor_friendly': ''},
-            color='impact_score',
-            color_continuous_scale='Plasma'
-        )
-        fig.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig, use_container_width=True)
-    
-    generate_friendly_factors_insight(factor_results)
-
-
-def analyze_real_safety_factors(datasets):
-    """Analyze real safety factors across datasets with friendly presentation"""
-    try:
-        all_correlations = []
-        all_features = []
-        factor_impacts = {}
-        
-        for df, source_name in datasets:
-            if df is None or len(df) == 0:
-                continue
-                
-            meaningful_features = get_meaningful_features(df)
-            if len(meaningful_features) < 2:
-                continue
-            
-            feature_matrix = df[meaningful_features].copy()
-            for col in meaningful_features:
-                feature_matrix[col] = feature_matrix[col].fillna(feature_matrix[col].median())
-            
-            corr_matrix = feature_matrix.corr()
-            
-            for i in range(len(meaningful_features)):
-                for j in range(i+1, len(meaningful_features)):
-                    corr_val = corr_matrix.iloc[i, j]
-                    
-                    if abs(corr_val) > 0.25:
-                        feature1 = meaningful_features[i]
-                        feature2 = meaningful_features[j]
-                        
-                        all_correlations.append({
-                            'feature1': feature1,
-                            'feature2': feature2,
-                            'correlation': corr_val,
-                            'strength': abs(corr_val),
-                            'relationship_friendly': create_friendly_relationship(feature1, feature2, corr_val),
-                            'source': source_name
-                        })
-            
-            for feature in meaningful_features:
-                if feature not in factor_impacts:
-                    factor_impacts[feature] = []
-                
-                feature_variance = feature_matrix[feature].var()
-                factor_impacts[feature].append(feature_variance)
-            
-            all_features.extend(meaningful_features)
-        
-        correlations_df = pd.DataFrame(all_correlations)
-        if not correlations_df.empty:
-            correlations_df = correlations_df.sort_values('strength', ascending=True)
-        
-        factor_rankings = []
-        for feature, impacts in factor_impacts.items():
-            avg_impact = np.mean(impacts) if impacts else 0
-            factor_rankings.append({
-                'factor': feature,
-                'factor_friendly': make_feature_friendly(feature),
-                'impact_score': avg_impact
-            })
-        
-        factor_rankings_df = pd.DataFrame(factor_rankings)
-        factor_rankings_df = factor_rankings_df.sort_values('impact_score', ascending=True)
-        
-        key_insights = generate_real_key_insights(factor_rankings_df, correlations_df, datasets)
-        
-        return {
-            'meaningful_correlations': correlations_df,
-            'factor_rankings': factor_rankings_df,
-            'key_insights': key_insights,
-            'total_features': len(set(all_features))
-        }
-        
-    except Exception as e:
-        logger.error(f"Error in safety factors analysis: {e}")
-        return None
-
-
-def create_friendly_relationship(feature1, feature2, correlation):
-    """Create friendly description of correlation relationship"""
-    friendly1 = make_feature_friendly(feature1).replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
-    friendly2 = make_feature_friendly(feature2).replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
-    
-    if correlation > 0:
-        return f"{friendly1} ↗️ {friendly2}"
-    else:
-        return f"{friendly1} ↙️ {friendly2}"
-
-
-def generate_real_key_insights(factor_rankings_df, correlations_df, datasets):
-    """Generate key insights from real computed data"""
-    insights = {}
-    
-    try:
-        if not factor_rankings_df.empty:
-            top_factor_row = factor_rankings_df.iloc[-1]
-            insights['top_factor'] = top_factor_row['factor_friendly'].replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').strip()
-        else:
-            insights['top_factor'] = "Speed"
-        
-        best_conditions = "Clear Weather"
-        
-        for df, source in datasets:
-            if df is not None and 'temperature' in df.columns and 'incidents' in df.columns:
-                temp_incident_corr = df[['temperature', 'incidents']].corr().iloc[0, 1]
-                if temp_incident_corr < -0.2:
-                    best_conditions = "Warm Weather"
-                elif temp_incident_corr > 0.2:
-                    best_conditions = "Cool Weather"
-                break
-        
-        for df, source in datasets:
-            if df is not None and 'precipitation_mm' in df.columns and 'incidents' in df.columns:
-                precip_incident_corr = df[['precipitation_mm', 'incidents']].corr().iloc[0, 1]
-                if precip_incident_corr > 0.2:
-                    best_conditions = "Dry Conditions"
-                break
-        
-        insights['best_conditions'] = best_conditions
-        
-        improvement_potential = 15
-        
-        for df, source in datasets:
-            if df is not None and 'incidents' in df.columns:
-                incidents = df['incidents']
-                if len(incidents) > 1:
-                    min_incidents = incidents.quantile(0.1)
-                    avg_incidents = incidents.mean()
-                    if avg_incidents > 0:
-                        potential = ((avg_incidents - min_incidents) / avg_incidents) * 100
-                        improvement_potential = max(5, min(50, potential))
-                break
-        
-        insights['improvement_potential'] = improvement_potential
-        
-        return insights
-        
-    except Exception as e:
-        logger.error(f"Error generating key insights: {e}")
-        return {
-            'top_factor': 'Speed',
-            'best_conditions': 'Clear Weather',
-            'improvement_potential': 20
-        }
-
-
-def generate_friendly_factors_insight(factor_results):
-    """Generate friendly insight from real factor analysis"""
-    try:
         key_insights = factor_results['key_insights']
-        total_features = factor_results['total_features']
-        correlations_count = len(factor_results['meaningful_correlations'])
+        improvement_potential = key_insights.get('improvement_potential', 20)
+        correlations_count = len(factor_results['smart_correlations'])
         
-        top_factor = key_insights['top_factor']
-        best_conditions = key_insights['best_conditions']
-        improvement_potential = key_insights['improvement_potential']
+        # Remove emojis from factor name for cleaner text
+        clean_top_factor = top_factor.replace('🚴‍♀️', '').replace('🏃‍♂️', '').replace('⚡', '').replace('🌧️', '').strip()
+        
+        # Assess correlation strength
+        correlation_strength = "strong interconnections" if correlations_count > 3 else "moderate relationships" if correlations_count > 0 else "independent factors"
+        
+        # Get date range info
+        date_info = ""
+        if 'filter_start_date' in st.session_state and st.session_state.filter_start_date:
+            date_info = " for the selected period"
         
         insight_text = f"""
-        ⚗️ **Discovery**: **{top_factor}** has the strongest impact on your safety based on real data analysis.
+        ⚗️ **Discovery**: **{clean_top_factor}** has the strongest impact on your safety (influence score: {top_impact:.3f}) based on {data_points} data points{date_info}.
         
-        🎯 **Optimization Opportunity**: Under **{best_conditions.lower()} conditions**, 
-        you could be **{improvement_potential:.0f}% safer** than your current average.
+        🎯 **Optimization Opportunity**: Under optimal conditions ({key_insights.get('optimal_conditions', 'clear weather').lower()}), 
+        you could be **{improvement_potential:.0f}% safer** than your current average performance.
         
-        🔗 **Connections Found**: Our analysis discovered {correlations_count} meaningful relationships 
-        between {total_features} safety factors. {"These connections show how factors work together" if correlations_count > 0 else "Your safety factors work independently"}.
+        🔗 **Factor Analysis**: Found {correlations_count} meaningful relationships between safety factors, indicating {correlation_strength}. 
+        {"Understanding these connections is key to holistic safety improvement" if correlations_count > 0 else "Your safety factors work independently, allowing focused optimization"}.
         
-        🚀 **Action Plan**: Focus on {top_factor.lower()} during {best_conditions.lower()} for maximum safety improvement!
+        🚀 **Action Plan**: {"Focus on your top factor during optimal conditions for maximum safety ROI" if improvement_potential > 15 else "Fine-tune your approach to your top factor for marginal gains"}!
         """
         
         st.markdown(f"""
@@ -1176,6 +920,674 @@ def generate_friendly_factors_insight(factor_results):
         logger.error(f"Error generating factors insight: {e}")
 
 
+# Keep the original function name for compatibility
 def render_ml_insights_page():
     """Wrapper to maintain compatibility with existing code"""
-    render_smart_insights_page()
+    render_smart_insights_page()"""
+Smart Insights Page for SeeSense Dashboard - Dynamic User-Friendly Version
+Beautiful interface with real computations that respond to date filters
+"""
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from sklearn.ensemble import RandomForestRegressor, IsolationForest
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, r2_score, silhouette_score
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Tuple, List
+import logging
+import warnings
+
+from app.core.data_processor import data_processor
+from app.utils.config import config
+
+# Suppress technical warnings for cleaner output
+warnings.filterwarnings('ignore', category=UserWarning)
+logger = logging.getLogger(__name__)
+
+
+def render_smart_insights_page():
+    """Render the Smart Insights page with dynamic data based on filters"""
+    st.title("🧠 Smart Insights")
+    st.markdown("**AI discovers actionable patterns in your cycling data to keep you safer**")
+    
+    # Add helpful explanation with modern styling
+    with st.expander("ℹ️ What are Smart Insights?", expanded=False):
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; color: white; margin: 10px 0;'>
+        <h4 style='color: white; margin-top: 0;'>🤖 Your Personal Safety AI</h4>
+        Our advanced AI analyzes your cycling data to discover hidden patterns and predict safety risks.
+        Think of it as having a smart cycling coach that learns from thousands of rides!
+        </div>
+        
+        **What you'll discover:**
+        - 🎯 **Safety Predictions** - Which conditions lead to higher risks
+        - 👥 **Riding Patterns** - Your unique cycling personality and habits  
+        - ⚠️ **Safety Alerts** - When conditions become unusually risky
+        - 📊 **Smart Factors** - What really affects your safety (and what doesn't)
+        """, unsafe_allow_html=True)
+    
+    try:
+        # Load all datasets
+        all_data = data_processor.load_all_datasets()
+        
+        # Check if we have any data
+        available_datasets = [name for name, (df, _) in all_data.items() if df is not None]
+        
+        if not available_datasets:
+            render_no_data_message()
+            return
+        
+        # Extract dataframes
+        routes_df = all_data.get('routes', (None, {}))[0]
+        braking_df = all_data.get('braking_hotspots', (None, {}))[0]
+        swerving_df = all_data.get('swerving_hotspots', (None, {}))[0]
+        time_series_df = all_data.get('time_series', (None, {}))[0]
+        
+        # Apply date filters from session state (set by Overview page)
+        routes_df, braking_df, swerving_df, time_series_df = apply_date_filters(
+            routes_df, braking_df, swerving_df, time_series_df
+        )
+        
+        # Add simple controls in sidebar
+        smart_options = render_simple_controls()
+        
+        # Create modern tabs with emojis
+        safety_tab, patterns_tab, alerts_tab, insights_tab = st.tabs([
+            "🎯 Safety Intelligence", 
+            "👥 Your Cycling DNA", 
+            "⚠️ Smart Alerts", 
+            "🧬 Safety Factors"
+        ])
+        
+        with safety_tab:
+            render_safety_intelligence(routes_df, braking_df, swerving_df, time_series_df, smart_options)
+        
+        with patterns_tab:
+            render_cycling_dna(routes_df, time_series_df, smart_options)
+        
+        with alerts_tab:
+            render_smart_alerts(time_series_df, braking_df, swerving_df, smart_options)
+        
+        with insights_tab:
+            render_safety_factors_analysis(routes_df, braking_df, swerving_df, time_series_df, smart_options)
+        
+    except Exception as e:
+        logger.error(f"Error in Smart Insights page: {e}")
+        st.error("⚠️ Something went wrong while analyzing your data.")
+        st.info("Please check your data files and try refreshing the page.")
+        
+        with st.expander("🔍 Technical Details"):
+            st.code(str(e))
+
+
+def apply_date_filters(routes_df, braking_df, swerving_df, time_series_df):
+    """Apply date filters from session state to all dataframes"""
+    try:
+        # Get date filters from session state (set by Overview page)
+        start_date = st.session_state.get('filter_start_date')
+        end_date = st.session_state.get('filter_end_date')
+        
+        if start_date is None or end_date is None:
+            return routes_df, braking_df, swerving_df, time_series_df
+        
+        # Convert to datetime for comparison
+        start_date = pd.to_datetime(start_date)
+        end_date = pd.to_datetime(end_date)
+        
+        # Filter time series data
+        if time_series_df is not None and 'date' in time_series_df.columns:
+            time_series_df = time_series_df.copy()
+            time_series_df['date'] = pd.to_datetime(time_series_df['date'])
+            mask = (time_series_df['date'] >= start_date) & (time_series_df['date'] <= end_date)
+            time_series_df = time_series_df[mask]
+        
+        # Filter braking hotspots data
+        if braking_df is not None and 'date_recorded' in braking_df.columns:
+            braking_df = braking_df.copy()
+            braking_df['date_recorded'] = pd.to_datetime(braking_df['date_recorded'])
+            mask = (braking_df['date_recorded'] >= start_date) & (braking_df['date_recorded'] <= end_date)
+            braking_df = braking_df[mask]
+        
+        # Filter swerving hotspots data
+        if swerving_df is not None and 'date_recorded' in swerving_df.columns:
+            swerving_df = swerving_df.copy()
+            swerving_df['date_recorded'] = pd.to_datetime(swerving_df['date_recorded'])
+            mask = (swerving_df['date_recorded'] >= start_date) & (swerving_df['date_recorded'] <= end_date)
+            swerving_df = swerving_df[mask]
+        
+        # Note: Routes data doesn't typically have dates, so we keep it as is
+        # unless there's a specific date column
+        
+        return routes_df, braking_df, swerving_df, time_series_df
+        
+    except Exception as e:
+        logger.error(f"Error applying date filters: {e}")
+        return routes_df, braking_df, swerving_df, time_series_df
+
+
+def render_no_data_message():
+    """Render modern no-data message"""
+    st.markdown("""
+    <div style='text-align: center; padding: 40px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); border-radius: 20px; color: white;'>
+    <h2 style='color: white;'>🚀 Ready to Unlock Your Cycling Insights?</h2>
+    <p style='font-size: 18px; margin: 20px 0;'>Upload your cycling data to discover amazing patterns!</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.markdown("""
+    ## 📊 What We Need
+    
+    **📍 Route Data** - Where you've been cycling  
+    **⏱️ Daily Stats** - Your ride history and metrics  
+    **🚨 Safety Events** - Braking and swerving incidents
+    
+    Once you add your data files, our AI will reveal insights you never knew existed! 🎉
+    """)
+
+
+def render_simple_controls():
+    """Render modern, user-friendly controls"""
+    st.sidebar.markdown("""
+    <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 15px; border-radius: 10px; color: white; margin-bottom: 20px;'>
+    <h3 style='color: white; margin: 0;'>⚙️ AI Settings</h3>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    options = {}
+    
+    # Simplified controls with better UX
+    options['sensitivity'] = st.sidebar.radio(
+        "🔍 Alert Sensitivity",
+        ["🟢 Relaxed", "🟡 Balanced", "🔴 Vigilant"],
+        index=1,
+        help="How sensitive should safety alerts be?"
+    )
+    
+    # Convert to technical values
+    sensitivity_map = {"🟢 Relaxed": 0.1, "🟡 Balanced": 0.05, "🔴 Vigilant": 0.02}
+    options['anomaly_contamination'] = sensitivity_map[options['sensitivity']]
+    
+    options['prediction_period'] = st.sidebar.selectbox(
+        "🔮 Prediction Horizon",
+        ["📅 Next Week", "📊 Next 2 Weeks", "📈 Next Month", "🎯 Next Quarter"],
+        index=2,
+        help="How far ahead should we predict safety trends?"
+    )
+    
+    # Convert to days
+    period_map = {"📅 Next Week": 7, "📊 Next 2 Weeks": 14, "📈 Next Month": 30, "🎯 Next Quarter": 90}
+    options['prediction_days'] = period_map[options['prediction_period']]
+    
+    options['pattern_detail'] = st.sidebar.selectbox(
+        "🎨 Pattern Detail",
+        ["🔍 Simple (2-3 patterns)", "⚖️ Moderate (4-5 patterns)", "🎯 Detailed (6-8 patterns)"],
+        index=1,
+        help="How detailed should pattern analysis be?"
+    )
+    
+    # Convert to clusters
+    detail_map = {"🔍 Simple (2-3 patterns)": 3, "⚖️ Moderate (4-5 patterns)": 4, "🎯 Detailed (6-8 patterns)": 6}
+    options['n_clusters'] = detail_map[options['pattern_detail']]
+    
+    options['min_data_needed'] = 10  # Reduced for filtered data
+    
+    return options
+
+
+def get_meaningful_features(df):
+    """Extract only meaningful features for analysis, excluding coordinates and IDs"""
+    if df is None or df.empty:
+        return []
+    
+    # Define meaningful feature categories
+    meaningful_patterns = [
+        'speed', 'duration', 'distance', 'incidents', 'braking', 'swerving', 
+        'temperature', 'precipitation', 'wind', 'visibility', 'intensity',
+        'popularity', 'rating', 'days_active', 'cyclists', 'severity',
+        'deceleration', 'lateral', 'total_rides'
+    ]
+    
+    # Filter columns to only meaningful ones
+    all_columns = df.columns.tolist()
+    meaningful_columns = []
+    
+    for col in all_columns:
+        col_lower = col.lower()
+        # Include if matches meaningful patterns and exclude coordinates/IDs
+        if any(pattern in col_lower for pattern in meaningful_patterns):
+            if not any(exclude in col_lower for exclude in ['lat', 'lon', 'id', '_id', 'start_', 'end_']):
+                if pd.api.types.is_numeric_dtype(df[col]):
+                    if df[col].nunique() > 1 and df[col].std() > 0:
+                        meaningful_columns.append(col)
+    
+    return meaningful_columns
+
+
+def render_safety_intelligence(routes_df, braking_df, swerving_df, time_series_df, options):
+    """Render advanced safety predictions with dynamic data"""
+    st.markdown("### 🎯 Safety Intelligence")
+    
+    # Show date filter info if active
+    show_filter_info()
+    
+    # Create AI insight card
+    with st.container():
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 15px; margin: 20px 0;'>
+        <h4 style='margin-top: 0; color: #333;'>🤖 AI Insight</h4>
+        <p style='font-size: 16px; margin-bottom: 0; color: #555;'>Analyzing your cycling patterns to predict when and where you're most at risk...</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Use time series data as primary source for meaningful analysis
+    primary_df = time_series_df if time_series_df is not None and len(time_series_df) > options['min_data_needed'] else routes_df
+    
+    if primary_df is None or len(primary_df) < options['min_data_needed']:
+        st.info(f"🔄 Need at least {options['min_data_needed']} records for reliable predictions. {get_data_availability_message(primary_df)}")
+        return
+    
+    # Get meaningful features only
+    meaningful_features = get_meaningful_features(primary_df)
+    
+    if len(meaningful_features) < 2:
+        st.warning("🔍 Not enough meaningful data for safety predictions. Add more cycling metrics!")
+        return
+    
+    # Create safety predictions with meaningful variables
+    prediction_results = create_dynamic_safety_predictions(primary_df, meaningful_features)
+    
+    if prediction_results is None:
+        st.warning("🤔 Our AI couldn't find clear patterns in the filtered data. Try expanding the date range!")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🏆 What Drives Your Safety")
+        
+        importance_data = prediction_results['feature_importance']
+        
+        # Create beautiful, meaningful chart
+        fig = px.bar(
+            importance_data.head(8),  # Top 8 factors
+            x='importance',
+            y='friendly_name',
+            orientation='h',
+            title="Your Personal Safety Factors",
+            labels={'importance': 'Impact Level', 'friendly_name': ''},
+            color='importance',
+            color_continuous_scale='Viridis',
+            text='importance'
+        )
+        fig.update_traces(texttemplate='%{text:.1%}', textposition='outside')
+        fig.update_layout(height=400, showlegend=False, font=dict(size=12))
+        st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 🎲 Your Safety Score Range")
+        
+        predictions = prediction_results['predictions']
+        safety_scores = convert_predictions_to_safety_scores(predictions)
+        
+        # Create modern histogram
+        fig = px.histogram(
+            x=safety_scores,
+            nbins=15,
+            title="Distribution of Your Safety Scores",
+            labels={'x': 'Safety Score (1=High Risk, 10=Very Safe)', 'y': 'Frequency'},
+            color_discrete_sequence=['#6366f1']
+        )
+        fig.update_layout(height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Add modern metrics
+        avg_score = np.mean(safety_scores)
+        score_std = np.std(safety_scores)
+        
+        col2a, col2b = st.columns(2)
+        with col2a:
+            st.metric(
+                "🏅 Average Safety Score", 
+                f"{avg_score:.1f}/10",
+                help="Your typical safety level across all conditions"
+            )
+        with col2b:
+            consistency = "High" if score_std < 1 else "Medium" if score_std < 2 else "Variable"
+            st.metric(
+                "📊 Consistency",
+                consistency,
+                help="How consistent your safety scores are"
+            )
+    
+    # AI-generated insight
+    generate_dynamic_safety_intelligence_insight(prediction_results, safety_scores, len(primary_df))
+
+
+def render_cycling_dna(routes_df, time_series_df, options):
+    """Render personality-based cycling analysis with dynamic data"""
+    st.markdown("### 👥 Your Cycling DNA")
+    
+    # Show date filter info if active
+    show_filter_info()
+    
+    # Modern AI insight card
+    with st.container():
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%); padding: 20px; border-radius: 15px; margin: 20px 0;'>
+        <h4 style='margin-top: 0; color: #333;'>🧬 AI Insight</h4>
+        <p style='font-size: 16px; margin-bottom: 0; color: #555;'>Discovering your unique cycling personality and riding patterns...</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Use time series for richer pattern analysis
+    primary_df = time_series_df if time_series_df is not None and len(time_series_df) > options['min_data_needed'] else routes_df
+    
+    if primary_df is None or len(primary_df) < options['min_data_needed']:
+        st.info(f"🧬 Need more data for cycling DNA analysis. {get_data_availability_message(primary_df)}")
+        return
+    
+    # Get meaningful features
+    meaningful_features = get_meaningful_features(primary_df)
+    
+    if len(meaningful_features) < 2:
+        st.warning("🔍 Not enough cycling metrics to determine your patterns yet!")
+        return
+    
+    # Analyze cycling patterns
+    pattern_results = analyze_dynamic_cycling_dna(primary_df, meaningful_features, options['n_clusters'])
+    
+    if pattern_results is None:
+        st.warning("🤔 Your cycling patterns are still emerging. Keep riding!")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🎭 Your Cycling Personas")
+        
+        if 'persona_distribution' in pattern_results:
+            persona_data = pattern_results['persona_distribution']
+            
+            # Create stunning pie chart
+            fig = px.pie(
+                persona_data,
+                values='percentage',
+                names='persona',
+                title="How You Spend Your Cycling Time",
+                color_discrete_sequence=px.colors.qualitative.Set3
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label')
+            fig.update_layout(height=400, font=dict(size=12))
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 📈 Your Pattern Evolution")
+        
+        if 'pattern_timeline' in pattern_results and time_series_df is not None:
+            timeline_data = pattern_results['pattern_timeline']
+            
+            fig = px.line(
+                timeline_data,
+                x='date',
+                y='dominant_persona',
+                title="How Your Cycling Style Evolves",
+                labels={'dominant_persona': 'Primary Cycling Style', 'date': 'Date'},
+                color_discrete_sequence=['#8b5cf6']
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # Show personality traits instead
+            st.markdown("**🎯 Your Cycling Traits:**")
+            if 'personality_traits' in pattern_results:
+                for trait in pattern_results['personality_traits']:
+                    st.markdown(f"✨ {trait}")
+    
+    # AI-generated insight
+    generate_dynamic_cycling_dna_insight(pattern_results, len(primary_df))
+
+
+def render_smart_alerts(time_series_df, braking_df, swerving_df, options):
+    """Render intelligent safety alerts with dynamic data"""
+    st.markdown("### ⚠️ Smart Safety Alerts")
+    
+    # Show date filter info if active
+    show_filter_info()
+    
+    # Modern AI insight card
+    with st.container():
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%); padding: 20px; border-radius: 15px; margin: 20px 0;'>
+        <h4 style='margin-top: 0; color: #333;'>🔮 AI Insight</h4>
+        <p style='font-size: 16px; margin-bottom: 0; color: #555;'>Monitoring unusual patterns and potential safety risks in real-time...</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    if time_series_df is None or len(time_series_df) < options['min_data_needed']:
+        st.info(f"⏳ Need more daily data to detect unusual patterns. {get_data_availability_message(time_series_df)}")
+        return
+    
+    # Get meaningful features for anomaly detection
+    meaningful_features = get_meaningful_features(time_series_df)
+    
+    if len(meaningful_features) < 2:
+        st.warning("🔍 Need more safety metrics to detect unusual patterns!")
+        return
+    
+    # Detect smart alerts
+    alert_results = detect_dynamic_intelligent_alerts(time_series_df, meaningful_features, options)
+    
+    if alert_results is None:
+        st.warning("🤔 No unusual patterns detected in your recent rides!")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🚨 Recent Safety Alerts")
+        
+        if 'priority_alerts' in alert_results and len(alert_results['priority_alerts']) > 0:
+            alerts = alert_results['priority_alerts']
+            
+            for alert in alerts[:5]:  # Show top 5 alerts
+                severity_color = "🔴" if alert['severity'] > 0.7 else "🟡" if alert['severity'] > 0.4 else "🟢"
+                
+                st.markdown(f"""
+                <div style='border-left: 4px solid {"#ef4444" if alert["severity"] > 0.7 else "#f59e0b" if alert["severity"] > 0.4 else "#10b981"}; 
+                           padding: 15px; margin: 10px 0; background: #f8fafc; border-radius: 0 8px 8px 0;'>
+                <strong>{severity_color} {alert['title']}</strong><br>
+                <span style='color: #64748b;'>{alert['description']}</span><br>
+                <small style='color: #94a3b8;'>📅 {alert['date']}</small>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='text-align: center; padding: 30px; background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); border-radius: 15px;'>
+            <h4 style='color: #155724; margin-top: 0;'>🎉 All Clear!</h4>
+            <p style='color: #155724; margin-bottom: 0;'>No safety alerts detected in the selected period. Your rides have been consistently safe!</p>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown("#### 📊 Alert Trends")
+        
+        if 'alert_timeline' in alert_results:
+            timeline = alert_results['alert_timeline']
+            
+            fig = px.area(
+                timeline,
+                x='date',
+                y='alert_count',
+                title="Safety Alert Trends Over Time",
+                labels={'alert_count': 'Daily Alerts', 'date': 'Date'},
+                color_discrete_sequence=['#f59e0b']
+            )
+            fig.update_layout(height=400)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Modern summary metrics
+        if 'summary_stats' in alert_results:
+            stats = alert_results['summary_stats']
+            
+            st.metric(
+                "🚨 Alerts in Period", 
+                stats.get('total_alerts', 0),
+                help="Safety alerts in the selected time period"
+            )
+            
+            safe_days = stats.get('safe_days', 0)
+            st.metric(
+                "🔥 Safe Days", 
+                f"{safe_days} days",
+                help="Days without safety alerts in selected period"
+            )
+    
+    # AI-generated insight
+    generate_dynamic_smart_alerts_insight(alert_results, len(time_series_df))
+
+
+def render_safety_factors_analysis(routes_df, braking_df, swerving_df, time_series_df, options):
+    """Render intelligent analysis of what affects safety with dynamic data"""
+    st.markdown("### 🧬 What Really Affects Your Safety")
+    
+    # Show date filter info if active
+    show_filter_info()
+    
+    # Modern AI insight card
+    with st.container():
+        st.markdown("""
+        <div style='background: linear-gradient(135deg, #e0c3fc 0%, #9bb5ff 100%); padding: 20px; border-radius: 15px; margin: 20px 0;'>
+        <h4 style='margin-top: 0; color: #333;'>⚗️ AI Insight</h4>
+        <p style='font-size: 16px; margin-bottom: 0; color: #555;'>Uncovering the hidden connections between conditions and your safety...</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Use time series for comprehensive factor analysis
+    primary_df = time_series_df if time_series_df is not None and len(time_series_df) > options['min_data_needed'] else routes_df
+    
+    if primary_df is None or len(primary_df) < options['min_data_needed']:
+        st.info(f"🔬 Need more data for factor analysis. {get_data_availability_message(primary_df)}")
+        return
+    
+    # Get meaningful features
+    meaningful_features = get_meaningful_features(primary_df)
+    
+    if len(meaningful_features) < 3:
+        st.warning("🔍 Need more safety metrics to analyze factor relationships!")
+        return
+    
+    # Analyze safety factors with meaningful variables only
+    factor_results = analyze_dynamic_intelligent_safety_factors(primary_df, meaningful_features)
+    
+    if factor_results is None:
+        st.warning("🤔 Couldn't find clear relationships between safety factors yet!")
+        return
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 🎯 Safety Factor Rankings")
+        
+        if 'factor_rankings' in factor_results:
+            rankings = factor_results['factor_rankings']
+            
+            # Create modern ranking chart
+            fig = px.bar(
+                rankings.head(10),
+                x='impact_score',
+                y='factor_name',
+                orientation='h',
+                title="Factors Ranked by Safety Impact",
+                labels={'impact_score': 'Safety Impact Score', 'factor_name': ''},
+                color='impact_score',
+                color_continuous_scale='Plasma',
+                text='impact_score'
+            )
+            fig.update_traces(texttemplate='%{text:.2f}', textposition='outside')
+            fig.update_layout(height=500, showlegend=False)
+            st.plotly_chart(fig, use_container_width=True)
+    
+    with col2:
+        st.markdown("#### 🔗 Smart Factor Connections")
+        
+        if 'smart_correlations' in factor_results:
+            correlations = factor_results['smart_correlations']
+            
+            if not correlations.empty:
+                # Create network-style correlation chart
+                fig = px.scatter(
+                    correlations,
+                    x='factor_1_impact',
+                    y='factor_2_impact', 
+                    size='connection_strength',
+                    color='relationship_type',
+                    title="How Safety Factors Connect",
+                    labels={
+                        'factor_1_impact': 'Factor 1 Impact',
+                        'factor_2_impact': 'Factor 2 Impact',
+                        'connection_strength': 'Connection Strength'
+                    },
+                    hover_data=['factor_pair']
+                )
+                fig.update_layout(height=500)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("🔍 No strong factor connections found in the selected period!")
+    
+    # Key insights summary
+    if 'key_insights' in factor_results:
+        insights = factor_results['key_insights']
+        
+        st.markdown("#### 💡 Key Discoveries")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric(
+                "🏆 Top Safety Factor",
+                insights.get('primary_factor', 'Speed'),
+                help="The single most important factor for your safety"
+            )
+        
+        with col2:
+            st.metric(
+                "🌟 Best Conditions",
+                insights.get('optimal_conditions', 'Clear Weather'),
+                help="When you're typically safest"
+            )
+        
+        with col3:
+            improvement = insights.get('improvement_potential', 0)
+            st.metric(
+                "🚀 Improvement Potential",
+                f"{improvement:.0f}% safer",
+                help="How much safer you could be with optimal conditions"
+            )
+    
+    # AI-generated insight
+    generate_dynamic_safety_factors_insight(factor_results, len(primary_df))
+
+
+# Helper functions for dynamic data processing
+
+def show_filter_info():
+    """Show information about active date filters"""
+    start_date = st.session_state.get('filter_start_date')
+    end_date = st.session_state.get('filter_end_date')
+    
+    if start_date and end_date:
+        st.info(f"📅 **Filtered Analysis:** {start_date.strftime('%Y-%m-%d') if hasattr(start_date, 'strftime') else start_date} to {end_date.strftime('%Y-%m-%d') if hasattr(end_date, 'strftime') else end_date}")
+
+
+def get_data_availability_message(df):
+    """Get friendly message about data availability"""
+    if df is None:
+        return "No data available for this period."
+    else:
+        return f"Currently
