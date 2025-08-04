@@ -57,22 +57,21 @@ def load_custom_css():
         .main {
             background-color: #f9f9f9;
         }
+        
+        /* HIDE MAIN CONTENT TABS - Keep only sidebar navigation */
         .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
+            display: none !important;
         }
+        
         .stTabs [data-baseweb="tab"] {
-            height: 50px;
-            white-space: pre-wrap;
-            background-color: #ffffff;
-            border-radius: 4px 4px 0px 0px;
-            gap: 1px;
-            padding-top: 10px;
-            padding-bottom: 10px;
+            display: none !important;
         }
-        .stTabs [aria-selected="true"] {
-            background-color: #4e89ae;
-            color: white;
+        
+        /* Alternative: If you want to hide tabs completely */
+        div[data-testid="stTabs"] {
+            display: none !important;
         }
+        
         .metric-card {
             background-color: #ffffff;
             border-radius: 5px;
