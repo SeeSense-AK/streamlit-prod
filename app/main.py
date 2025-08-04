@@ -57,47 +57,22 @@ def load_custom_css():
         .main {
             background-color: #f9f9f9;
         }
-        
-        /* HIDE ALL POSSIBLE TAB VARIATIONS */
-        /* Hide standard Streamlit tabs */
         .stTabs [data-baseweb="tab-list"] {
-            display: none !important;
+            gap: 8px;
         }
-        
         .stTabs [data-baseweb="tab"] {
-            display: none !important;
+            height: 50px;
+            white-space: pre-wrap;
+            background-color: #ffffff;
+            border-radius: 4px 4px 0px 0px;
+            gap: 1px;
+            padding-top: 10px;
+            padding-bottom: 10px;
         }
-        
-        /* Hide tabs container completely */
-        div[data-testid="stTabs"] {
-            display: none !important;
+        .stTabs [aria-selected="true"] {
+            background-color: #4e89ae;
+            color: white;
         }
-        
-        /* Hide multipage navigation */
-        .stMultiPage [data-testid="stSidebarNav"] {
-            display: none !important;
-        }
-        
-        /* Hide any navigation in header area */
-        section[data-testid="stSidebar"] .stSelectbox,
-        section[data-testid="stSidebar"] .stRadio {
-            /* Keep sidebar navigation visible */
-        }
-        
-        /* Hide main content area navigation tabs */
-        section[data-testid="stMain"] .stTabs,
-        section[data-testid="stMain"] div[data-baseweb="tab-list"],
-        .main .stTabs {
-            display: none !important;
-        }
-        
-        /* Hide any horizontal navigation in main content */
-        .main nav,
-        .main .nav-tabs,
-        .main .tab-nav {
-            display: none !important;
-        }
-        
         .metric-card {
             background-color: #ffffff;
             border-radius: 5px;
