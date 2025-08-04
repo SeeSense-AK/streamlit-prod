@@ -686,4 +686,5 @@ def create_risk_zone_map(risk_zones):
         return fig
     
     except Exception as e:
-        logger.error(f"Error creating risk zone map: {
+        logger.error(f"Error creating risk zone map: {e}")
+        return None
