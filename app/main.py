@@ -58,7 +58,8 @@ def load_custom_css():
             background-color: #f9f9f9;
         }
         
-        /* HIDE MAIN CONTENT TABS - Keep only sidebar navigation */
+        /* HIDE ALL POSSIBLE TAB VARIATIONS */
+        /* Hide standard Streamlit tabs */
         .stTabs [data-baseweb="tab-list"] {
             display: none !important;
         }
@@ -67,8 +68,33 @@ def load_custom_css():
             display: none !important;
         }
         
-        /* Alternative: If you want to hide tabs completely */
+        /* Hide tabs container completely */
         div[data-testid="stTabs"] {
+            display: none !important;
+        }
+        
+        /* Hide multipage navigation */
+        .stMultiPage [data-testid="stSidebarNav"] {
+            display: none !important;
+        }
+        
+        /* Hide any navigation in header area */
+        section[data-testid="stSidebar"] .stSelectbox,
+        section[data-testid="stSidebar"] .stRadio {
+            /* Keep sidebar navigation visible */
+        }
+        
+        /* Hide main content area navigation tabs */
+        section[data-testid="stMain"] .stTabs,
+        section[data-testid="stMain"] div[data-baseweb="tab-list"],
+        .main .stTabs {
+            display: none !important;
+        }
+        
+        /* Hide any horizontal navigation in main content */
+        .main nav,
+        .main .nav-tabs,
+        .main .tab-nav {
             display: none !important;
         }
         
