@@ -18,15 +18,14 @@ setup_logging()
 
 # Import core components
 from app.core.data_processor import data_processor
-from app.pages.data_setup import render_data_setup_page
 
-# Import page modules
-from app.pages.overview import render_overview_page
-from app.pages.ml_insights import render_ml_insights_page
-from app.pages.spatial_analysis import render_spatial_analysis_page
-from app.pages.advanced_analytics import render_advanced_analytics_page
-from app.pages.actionable_insights import render_actionable_insights_page
-from app.pages.data_setup import render_data_setup_page
+# Import page modules (updated paths)
+from app.page_modules.overview import render_overview_page
+from app.page_modules.ml_insights import render_ml_insights_page
+from app.page_modules.spatial_analysis import render_spatial_analysis_page
+from app.page_modules.advanced_analytics import render_advanced_analytics_page
+from app.page_modules.actionable_insights import render_actionable_insights_page
+from app.page_modules.data_setup import render_data_setup_page
 
 
 logger = logging.getLogger(__name__)
@@ -56,22 +55,6 @@ def load_custom_css():
         <style>
         .main {
             background-color: #f9f9f9;
-        }
-        .stTabs [data-baseweb="tab-list"] {
-            gap: 8px;
-        }
-        .stTabs [data-baseweb="tab"] {
-            height: 50px;
-            white-space: pre-wrap;
-            background-color: #ffffff;
-            border-radius: 4px 4px 0px 0px;
-            gap: 1px;
-            padding-top: 10px;
-            padding-bottom: 10px;
-        }
-        .stTabs [aria-selected="true"] {
-            background-color: #4e89ae;
-            color: white;
         }
         .metric-card {
             background-color: #ffffff;
@@ -181,34 +164,12 @@ def render_data_not_available_message():
     ## Welcome to SeeSense Dashboard!
     
     To get started, you need to set up your cycling safety data files.
+    
+    1. Prepare your CSV files
+    2. Place them in the data directory
+    3. Use the Data Setup page for validation
+    4. Start exploring your dashboard!
     """)
-    
-    data_requirements = data_processor.check_data_requirements()
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("### 📋 Required Data Files:")
-        
-        for missing_file in data_requirements['missing_files']:
-            st.markdown(f"- **{missing_file['filename']}** (for {missing_file['dataset']} data)")
-        
-        st.markdown("### 📂 Data Directory:")
-        st.code(str(data_processor.raw_data_path))
-        
-        if st.button("📁 Go to Data Setup", type="primary"):
-            st.session_state.current_page = "data_setup"
-            st.experimental_rerun()
-    
-    with col2:
-        st.info("""
-        **Quick Start:**
-        
-        1. Prepare your CSV files
-        2. Place them in the data directory
-        3. Use the Data Setup page for validation
-        4. Start exploring your dashboard!
-        """)
 
 
 def main():
