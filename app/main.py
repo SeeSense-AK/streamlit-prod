@@ -142,8 +142,7 @@ def render_sidebar():
             "🔍 ML Insights": "ml_insights", 
             "🗺️ Spatial Analysis": "spatial_analysis",
             "📈 Advanced Analytics": "advanced_analytics",
-            "💡 Actionable Insights": "actionable_insights",
-            "📁 Data Setup": "data_setup"
+            "💡 Actionable Insights": "actionable_insights"
         }
         
         # Create navigation
