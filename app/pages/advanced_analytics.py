@@ -293,7 +293,7 @@ def create_hourly_safety_chart(hourly_stats: pd.DataFrame) -> Optional[go.Figure
         logger.error(f"Error creating hourly safety chart: {e}")
         return None
 
-def create_risk_zone_map(risk_zones: pd.DataFrame) -> Optional[px.Figure]:
+def create_risk_zone_map(risk_zones: pd.DataFrame) -> Optional[go.Figure]:
     """Create risk zone map visualization"""
     try:
         fig = px.scatter_mapbox(
